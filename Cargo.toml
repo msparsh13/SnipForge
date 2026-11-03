@@ -1,0 +1,22 @@
+[package]
+name = "snipforge"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = { version = "0.27", default-features = false, features = ["default_fonts", "glow"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+scrap = "0.5"
+tiny-skia = "0.11"
+fontdue = "0.9"
+arboard = "3"
+rfd = "0.14"
+dirs = "5"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+global-hotkey = "0.5"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
