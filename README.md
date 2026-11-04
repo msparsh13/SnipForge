@@ -1,44 +1,36 @@
-# SnipForge (Rust edition)
+# SnipForge (Rust edition) v0.2
 
-A native Windows screenshot / annotate / OCR / screen-recording tool written in Rust
-(egui UI, single `.exe`, no web view).
+Native Windows screenshot / annotate / OCR / screen-recording tool (Rust + egui, one `.exe`).
 
-> **Status: v0.1 — written without access to a Rust compiler, so run `cargo check` first.**
-> If it prints errors, paste them back and they get fixed quickly.
+> Written without access to a Rust compiler. Run `cargo check` first; if it prints errors,
+> paste them back and they get fixed fast.
 
 ## Build & run
-1. Install Rust: https://rustup.rs  (choose the default MSVC toolchain; it will ask you to install
-   *Visual Studio Build Tools -> "Desktop development with C++"*).
-2. In this folder:  `cargo run --release`
-   Output: `target\release\snipforge.exe` (a single file you can copy anywhere).
-3. Optional tools:
-   - **Recording** needs ffmpeg:  `winget install Gyan.FFmpeg`  (or put `ffmpeg.exe` next to `snipforge.exe`)
-   - **OCR** needs Tesseract: https://github.com/UB-Mannheim/tesseract/wiki
+1. Install Rust from https://rustup.rs (accept the "Desktop development with C++" build tools prompt).
+2. In this folder: `cargo run --release`  ->  `target\release\snipforge.exe`
+3. That's all. On first start SnipForge downloads the recording engine (ffmpeg, ~90 MB) by itself.
+   Text recognition uses the OCR built into Windows 10/11, so there is nothing to install.
 
-## What works in v0.1
-| Feature | Hotkey |
+## Use
+| Action | Hotkey |
 |---|---|
-| Region screenshot -> annotation editor | Ctrl+Alt+A |
-| Full-screen screenshot | Ctrl+Alt+F |
-| Grab text (OCR) from a region -> clipboard | Ctrl+Alt+T |
-| Record region to H.264 MP4 (+ microphone) | Ctrl+Alt+R (press again to stop) |
-| Open any existing image and edit it | button |
+| Region capture -> editor | Ctrl+Alt+A |
+| Full-screen capture -> editor | Ctrl+Alt+F |
+| Grab text (OCR) -> clipboard | Ctrl+Alt+T |
+| Record region (press again to stop) | Ctrl+Alt+R |
 
-Editor tools: arrow, rectangle, ellipse, pen, highlighter, text, auto-numbered steps, blur/pixelate
-redaction, undo/redo (Ctrl+Z / Ctrl+Y), copy, save (Ctrl+S), save as. Preview and saved file come from
-the same renderer, so they always match. Files go to `Pictures\SnipForge`.
+Closing the main window only minimises it, so the hotkeys keep working. Use **Quit SnipForge** to exit.
+Files are saved in `Pictures\SnipForge`. Settings are in `%APPDATA%\SnipForge\settings.txt`.
 
-## Known limits (v0.1)
+## How a capture works now
+Every capture runs as its own small process: it hides the other SnipForge windows, grabs the screen,
+then shows the selection overlay immediately - nothing needs to be clicked twice.
+
+## Editor
+Arrow, rectangle, ellipse, pen, marker, text, numbered steps, blur, **crop**.
+Undo/redo (Ctrl+Z / Ctrl+Y), copy (Ctrl+C), save (Ctrl+S), save as. Crop: drag, then Enter to apply.
+
+## Limits
 - Primary monitor only.
-- Recording starts minimised; stop with Ctrl+Alt+R or restore the window from the taskbar.
-- Hotkeys rely on the window waking up while minimised — **first thing to verify** (see below).
-
-## Not ported yet (the Python edition has them)
-scrolling capture, pin-to-screen, history browser, system tray icon, auto-captions (speech-to-text),
-video editor (trim/cut/speed/captions/export).
-
-## Planned port path
-- tray icon + pin-to-screen + history
-- scrolling capture (same template-matching idea, `imageproc`/own SAD matcher)
-- captions via whisper.cpp (`whisper-cli.exe` + ggml model) driven from Rust
-- video editor on top of ffmpeg (trim/cut/speed/burn-in subtitles)
+- Recording is video + microphone (first audio device); no system audio yet.
+- See ROADMAP.md for what is planned next.

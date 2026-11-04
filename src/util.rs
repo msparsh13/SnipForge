@@ -111,7 +111,3 @@ pub fn take_stop_request() -> bool {
         false
     }
 }
-
-pub fn ffmpeg_path() -> PathBuf {
-    PathBuf::from("ffmpeg")
-}

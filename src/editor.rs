@@ -50,7 +50,6 @@ pub enum EditorEvent {
     None,
     NewRegion,
     NewFull,
-    Home,
 }
 
 type CropRect = (u32, u32, u32, u32);
@@ -521,7 +520,7 @@ impl Editor {
                                 }
                             }
                         }
-                        if resp.drag_stopped() { 
+                        if resp.drag_released() {
                             if let Some(d) = self.drag.take() {
                                 if tool == Tool::Crop {
                                     if (d.cur - d.start).length() > 8.0 {

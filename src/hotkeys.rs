@@ -10,7 +10,7 @@ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use crate::util;
 
 #[derive(Clone, Copy)]
-pub enum Cmd {
+enum Cmd {
     Region,
     Full,
     Ocr,
