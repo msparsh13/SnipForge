@@ -12,7 +12,27 @@
 (The Python edition in `snipforge.zip` already has working versions of all of these, so they
 are a port job, not new design.)
 
-## Done in this version (v0.2)
+## Done in v0.5
+- Recording fixed: Stop now always finishes and saves (it used to hang when the microphone was on)
+- Pause / resume (button + Ctrl+Alt+P), recorded time excludes pauses
+- Separate microphone and device-audio options, with live mute toggles on the recording bar
+
+## Done in v0.4.1
+- Visible countdown when a capture delay is set (cancellable)
+
+## Done in v0.4
+- Choose where screenshots, recordings, extracted text and the recording engine are stored
+- Optional .txt file for every text extraction
+- One screenshot of all screens together; selection overlay across every monitor (A = all, 1-5 = one screen)
+- Record any region, one screen, or several screens together
+
+## Done in v0.3
+- Capture overlay covers the entire screen; big screenshots open maximised
+- Extract text from the image inside the editor (whole image or dragged region)
+- Recording engine installer rewritten (built-in downloader, progress bar, clear errors, manual fallback)
+- Light theme with a consistent palette
+
+## Done in v0.2
 - Region capture starts instantly: the app hides itself and the selection overlay appears right away
 - Ellipse tool draws a real ellipse (preview and result)
 - Crop tool in the editor (apply with Enter, undoable)

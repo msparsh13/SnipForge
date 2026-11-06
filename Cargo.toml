@@ -14,6 +14,9 @@ rfd = "0.14"
 dirs = "5"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 global-hotkey = "0.5"
+ureq = "2"
+cpal = "0.15"
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [profile.release]
 opt-level = 3

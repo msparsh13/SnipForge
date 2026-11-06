@@ -1,37 +1,99 @@
-//! Screen recording: frames from DXGI (`scrap`) are piped into ffmpeg (H.264 + optional mic).
-use std::io::{ErrorKind, Write};
+//! Screen recording. Video frames are piped into ffmpeg (H.264); audio (microphone and/or device
+//! audio) is captured by SnipForge itself into raw files and muxed in at the end. Supports pause.
+//! Regions inside the primary screen use fast DXGI capture; anything else (other monitors, or a region
+//! spanning several monitors) uses GDI.
+use std::fs::File;
+use std::io::{BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 use scrap::{Capturer, Display};
 
+use crate::audio::{self, AudioCapture};
+use crate::gdi::GdiGrabber;
 use crate::util::no_window;
 
+#[derive(Clone, Copy)]
+pub struct RecOptions {
+    pub fps: u32,
+    pub mic: bool,
+    pub system: bool,
+}
+
+#[derive(Default)]
+struct Shared {
+    stop: AtomicBool,
+    paused: Arc<AtomicBool>,
+    mic_on: Arc<AtomicBool>,
+    sys_on: Arc<AtomicBool>,
+    mic_ok: AtomicBool,
+    sys_ok: AtomicBool,
+    active_ms: AtomicU64,
+    note: Mutex<String>,
+}
+
 pub struct Recorder {
-    stop: Arc<AtomicBool>,
+    shared: Arc<Shared>,
     handle: Option<JoinHandle<Result<PathBuf, String>>>,
 }
 
 impl Recorder {
-    /// region = (x, y, width, height) in physical pixels of the primary display.
-    pub fn start(ctx: egui::Context, region: (u32, u32, u32, u32), fps: u32, mic: bool, out: PathBuf, ffmpeg: PathBuf) -> Recorder {
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop2 = stop.clone();
+    /// region = (x, y, width, height) in screen pixels. x/y may be negative (monitors left of / above the primary).
+    pub fn start(ctx: egui::Context, region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, ffmpeg: PathBuf) -> Recorder {
+        let shared = Arc::new(Shared::default());
+        shared.mic_on.store(true, Ordering::SeqCst);
+        shared.sys_on.store(true, Ordering::SeqCst);
+        let s2 = shared.clone();
         let handle = thread::spawn(move || {
-            let r = run(region, fps, mic, out, stop2, ffmpeg);
+            let r = run(region, opts, out, s2, ffmpeg);
             ctx.request_repaint();
             r
         });
-        Recorder { stop, handle: Some(handle) }
+        Recorder { shared, handle: Some(handle) }
     }
 
     pub fn request_stop(&self) {
-        self.stop.store(true, Ordering::SeqCst);
+        self.shared.stop.store(true, Ordering::SeqCst);
+    }
+    pub fn toggle_pause(&self) {
+        let v = self.shared.paused.load(Ordering::SeqCst);
+        self.shared.paused.store(!v, Ordering::SeqCst);
+    }
+    pub fn paused(&self) -> bool {
+        self.shared.paused.load(Ordering::SeqCst)
+    }
+    /// Recorded time, not counting pauses.
+    pub fn active_secs(&self) -> f32 {
+        self.shared.active_ms.load(Ordering::Relaxed) as f32 / 1000.0
+    }
+    pub fn mic_available(&self) -> bool {
+        self.shared.mic_ok.load(Ordering::Relaxed)
+    }
+    pub fn sys_available(&self) -> bool {
+        self.shared.sys_ok.load(Ordering::Relaxed)
+    }
+    pub fn mic_on(&self) -> bool {
+        self.shared.mic_on.load(Ordering::Relaxed)
+    }
+    pub fn sys_on(&self) -> bool {
+        self.shared.sys_on.load(Ordering::Relaxed)
+    }
+    pub fn toggle_mic(&self) {
+        let v = self.shared.mic_on.load(Ordering::SeqCst);
+        self.shared.mic_on.store(!v, Ordering::SeqCst);
+    }
+    pub fn toggle_sys(&self) {
+        let v = self.shared.sys_on.load(Ordering::SeqCst);
+        self.shared.sys_on.store(!v, Ordering::SeqCst);
+    }
+    /// Warnings collected while recording (e.g. "no microphone found").
+    pub fn note(&self) -> String {
+        self.shared.note.lock().map(|n| n.clone()).unwrap_or_default()
     }
 
     /// Returns Some(result) once the recording has been finalised.
@@ -45,84 +107,211 @@ impl Recorder {
     }
 }
 
-/// First DirectShow audio device (usually the default microphone).
-fn mic_device(ff: &std::path::Path) -> Option<String> {
-    let mut cmd = Command::new(ff);
-    cmd.args(["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"]);
-    no_window(&mut cmd);
-    let out = cmd.output().ok()?;
-    let text = String::from_utf8_lossy(&out.stderr).to_string();
-    for line in text.lines() {
-        if line.contains("(audio)") {
-            let a = line.find('"')?;
-            let b = line[a + 1..].find('"')?;
-            return Some(line[a + 1..a + 1 + b].to_string());
-        }
-    }
-    None
+// ------------------------------------------------------------------ audio files
+struct Track {
+    cap: AudioCapture,
+    file: BufWriter<File>,
+    path: PathBuf,
+    written: u64, // f32 values written
 }
 
-fn run(region: (u32, u32, u32, u32), fps: u32, mic: bool, out: PathBuf, stop: Arc<AtomicBool>, ff: PathBuf) -> Result<PathBuf, String> {
-    let (rx, ry, rw, rh) = region;
+impl Track {
+    fn open(loopback: bool, shared: &Shared, path: PathBuf) -> Result<Track, String> {
+        let enabled = if loopback { shared.sys_on.clone() } else { shared.mic_on.clone() };
+        let cap = audio::start_capture(loopback, shared.paused.clone(), enabled)?;
+        let file = BufWriter::new(File::create(&path).map_err(|e| e.to_string())?);
+        Ok(Track { cap, file, path, written: 0 })
+    }
+
+    /// Move captured samples to disk, and pad with silence so the track keeps real-time length
+    /// (device audio delivers nothing while the computer is silent).
+    fn pump(&mut self, active_secs: f64) {
+        while let Ok(buf) = self.cap.rx.try_recv() {
+            if self.file.write_all(&buf).is_ok() {
+                self.written += (buf.len() / 4) as u64;
+            }
+        }
+        let ch = self.cap.channels as u64;
+        let per_sec = self.cap.rate as f64 * ch as f64;
+        let expected = (active_secs * per_sec) as u64;
+        if self.written + (per_sec * 0.15) as u64 < expected {
+            let deficit = (expected - self.written) / ch * ch;
+            let zeros = [0u8; 4096];
+            let mut left = deficit * 4;
+            while left > 0 {
+                let n = left.min(zeros.len() as u64) as usize;
+                if self.file.write_all(&zeros[..n]).is_err() {
+                    break;
+                }
+                left -= n as u64;
+            }
+            self.written += deficit;
+        }
+    }
+
+    fn finish(mut self, active_secs: f64) -> (PathBuf, u32, u16) {
+        self.cap.stop();
+        self.pump(active_secs);
+        let _ = self.file.flush();
+        (self.path, self.cap.rate, self.cap.channels)
+    }
+}
+
+fn wait_timeout(child: &mut Child, secs: u64) -> Result<ExitStatus, String> {
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(s)) => return Ok(s),
+            Ok(None) => {
+                if start.elapsed() > Duration::from_secs(secs) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("ffmpeg did not finish in time".to_string());
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+fn read_stderr(child: &mut Child) -> String {
+    let mut s = String::new();
+    if let Some(mut e) = child.stderr.take() {
+        let _ = e.read_to_string(&mut s);
+    }
+    s.trim().to_string()
+}
+
+fn add_note(shared: &Shared, text: &str) {
+    if let Ok(mut n) = shared.note.lock() {
+        if !n.is_empty() {
+            n.push_str("\n");
+        }
+        n.push_str(text);
+    }
+}
+
+// ------------------------------------------------------------------ main recording thread
+fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc<Shared>, ff: PathBuf) -> Result<PathBuf, String> {
+    let fps = opts.fps.max(1);
+    let (ax, ay, rw, rh) = region;
     let (rw, rh) = (rw & !1, rh & !1); // encoders want even sizes
     if rw < 16 || rh < 16 {
         return Err("Region too small".to_string());
     }
-    let (rx, ry, rw_u, rh_u) = (rx as usize, ry as usize, rw as usize, rh as usize);
+    let (rw_u, rh_u) = (rw as usize, rh as usize);
 
-    let display = Display::primary().map_err(|e| e.to_string())?;
-    let mut cap = Capturer::new(display).map_err(|e| e.to_string())?;
-    let (sw, sh) = (cap.width(), cap.height());
-    if rx + rw_u > sw || ry + rh_u > sh {
-        return Err("Region is outside the primary display".to_string());
+    // choose the capture method
+    let mut dxgi: Option<(Capturer, usize)> = None; // capturer + screen height
+    let mut gdi: Option<GdiGrabber> = None;
+    if let Ok(display) = Display::primary() {
+        let (pw, ph) = (display.width(), display.height());
+        let inside = ax >= 0 && ay >= 0 && (ax as usize + rw_u) <= pw && (ay as usize + rh_u) <= ph;
+        if inside {
+            if let Ok(c) = Capturer::new(display) {
+                let sh = c.height();
+                dxgi = Some((c, sh));
+            }
+        }
+    }
+    if dxgi.is_none() {
+        gdi = Some(GdiGrabber::new(ax, ay, rw as i32, rh as i32)?);
     }
 
+    // audio tracks (failures are not fatal: the recording continues without that source)
+    let stamp = crate::util::timestamp();
+    let tmpdir = std::env::temp_dir();
+    let mut mic: Option<Track> = None;
+    let mut sys: Option<Track> = None;
+    if opts.mic {
+        match Track::open(false, &shared, tmpdir.join(format!("snipforge_mic_{stamp}.raw"))) {
+            Ok(t) => {
+                shared.mic_ok.store(true, Ordering::Relaxed);
+                mic = Some(t);
+            }
+            Err(e) => add_note(&shared, &format!("Microphone not recorded: {e}")),
+        }
+    }
+    if opts.system {
+        match Track::open(true, &shared, tmpdir.join(format!("snipforge_sys_{stamp}.raw"))) {
+            Ok(t) => {
+                shared.sys_ok.store(true, Ordering::Relaxed);
+                sys = Some(t);
+            }
+            Err(e) => add_note(&shared, &format!("Device audio not recorded: {e}")),
+        }
+    }
+
+    // video encoder: reads raw frames from stdin and ends when stdin is closed
+    let video_tmp = out.with_extension("video.tmp.mp4");
     let mut cmd = Command::new(&ff);
     cmd.args(["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgra"]);
     cmd.arg("-video_size").arg(format!("{}x{}", rw, rh));
     cmd.arg("-framerate").arg(fps.to_string());
-    cmd.args(["-i", "-"]);
-    let mic_name = if mic { mic_device(&ff) } else { None };
-    if let Some(name) = &mic_name {
-        cmd.args(["-thread_queue_size", "1024", "-f", "dshow", "-i"]);
-        cmd.arg(format!("audio={}", name));
-        cmd.args(["-map", "0:v", "-map", "1:a", "-c:a", "aac", "-b:a", "160k"]);
-    }
-    cmd.args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]);
-    cmd.arg(&out);
+    cmd.args(["-i", "-", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"]);
+    cmd.arg(&video_tmp);
     cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
     no_window(&mut cmd);
-
     let mut child = cmd.spawn().map_err(|e| {
-        format!("Could not start ffmpeg ({e}). Open SnipForge and use 'Install recording engine'.")
+        format!("Could not start ffmpeg ({e}). Open SnipForge and use 'Install now' in the Components box.")
     })?;
     let mut stdin = child.stdin.take().ok_or_else(|| "no ffmpeg stdin".to_string())?;
 
     let frame_bytes = rw_u * rh_u * 4;
     let mut last = vec![0u8; frame_bytes];
     let start = Instant::now();
+    let mut paused_total = Duration::ZERO;
+    let mut pause_started: Option<Instant> = None;
     let mut written: u64 = 0;
     let mut error: Option<String> = None;
+    let mut active = Duration::ZERO;
 
-    'outer: while !stop.load(Ordering::SeqCst) {
-        match cap.frame() {
-            Ok(frame) => {
-                let stride = frame.len() / sh;
-                for y in 0..rh_u {
-                    let src_start = (ry + y) * stride + rx * 4;
-                    let src = &frame[src_start..src_start + rw_u * 4];
-                    let dst_start = y * rw_u * 4;
-                    last[dst_start..dst_start + rw_u * 4].copy_from_slice(src);
+    'outer: while !shared.stop.load(Ordering::SeqCst) {
+        // ---- pause handling: the clock stops, no frames/samples are recorded
+        let is_paused = shared.paused.load(Ordering::SeqCst);
+        match (is_paused, pause_started) {
+            (true, None) => pause_started = Some(Instant::now()),
+            (false, Some(t)) => {
+                paused_total += t.elapsed();
+                pause_started = None;
+            }
+            _ => {}
+        }
+        if is_paused {
+            thread::sleep(Duration::from_millis(30));
+            continue;
+        }
+
+        // ---- grab a frame
+        if let Some((cap, sh)) = dxgi.as_mut() {
+            match cap.frame() {
+                Ok(frame) => {
+                    let stride = frame.len() / *sh;
+                    for y in 0..rh_u {
+                        let src_start = (ay as usize + y) * stride + (ax as usize) * 4;
+                        let src = &frame[src_start..src_start + rw_u * 4];
+                        let dst_start = y * rw_u * 4;
+                        last[dst_start..dst_start + rw_u * 4].copy_from_slice(src);
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {} // screen unchanged: reuse last frame
+                Err(e) => {
+                    error = Some(e.to_string());
+                    break;
                 }
             }
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {} // screen unchanged: reuse last frame
-            Err(e) => {
-                error = Some(e.to_string());
-                break;
+        } else if let Some(g) = gdi.as_mut() {
+            let data = g.grab();
+            if data.len() == last.len() {
+                last.copy_from_slice(data);
             }
         }
-        // keep real-time speed: write as many frames as are "due"
-        let due = (start.elapsed().as_secs_f64() * fps as f64) as u64 + 1;
+
+        // ---- keep real-time speed: write as many frames as are "due" (paused time excluded)
+        active = start.elapsed().saturating_sub(paused_total);
+        shared.active_ms.store(active.as_millis() as u64, Ordering::Relaxed);
+        let due = (active.as_secs_f64() * fps as f64) as u64 + 1;
         let n = due.saturating_sub(written).max(1).min(fps as u64);
         for _ in 0..n {
             if stdin.write_all(&last).is_err() {
@@ -130,20 +319,95 @@ fn run(region: (u32, u32, u32, u32), fps: u32, mic: bool, out: PathBuf, stop: Ar
             }
             written += 1;
         }
-        let target = start + Duration::from_secs_f64(written as f64 / fps as f64);
+        if let Some(t) = mic.as_mut() {
+            t.pump(active.as_secs_f64());
+        }
+        if let Some(t) = sys.as_mut() {
+            t.pump(active.as_secs_f64());
+        }
+        let target = start + paused_total + Duration::from_secs_f64(written as f64 / fps as f64);
         if let Some(wait) = target.checked_duration_since(Instant::now()) {
             thread::sleep(wait);
         }
     }
 
-    drop(stdin); // closing the pipe tells ffmpeg to finish the file
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    // ---- finish: close the pipe, wait for the video file (with a time limit so Stop can never hang)
+    drop(stdin);
+    let status = wait_timeout(&mut child, 60);
+    let ff_err = read_stderr(&mut child);
+    let secs = active.as_secs_f64();
+    let mic_info = mic.take().map(|t| t.finish(secs));
+    let sys_info = sys.take().map(|t| t.finish(secs));
+
     if let Some(e) = error {
+        let _ = std::fs::remove_file(&video_tmp);
         return Err(e);
     }
-    if !output.status.success() {
-        let msg = String::from_utf8_lossy(&output.stderr).to_string();
-        return Err(format!("ffmpeg failed:\n{}", msg.trim()));
+    match status {
+        Ok(s) if s.success() => {}
+        Ok(_) => {
+            let _ = std::fs::remove_file(&video_tmp);
+            return Err(format!("ffmpeg failed:\n{ff_err}"));
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&video_tmp);
+            return Err(e);
+        }
     }
-    Ok(out)
+
+    // ---- no audio: the video file is the result
+    if mic_info.is_none() && sys_info.is_none() {
+        std::fs::rename(&video_tmp, &out).map_err(|e| format!("could not save the recording: {e}"))?;
+        return Ok(out);
+    }
+
+    // ---- add the audio
+    let mut mux = Command::new(&ff);
+    mux.args(["-y", "-loglevel", "error", "-i"]).arg(&video_tmp);
+    for info in [&mic_info, &sys_info].into_iter().flatten() {
+        mux.args(["-f", "f32le", "-ar"]).arg(info.1.to_string());
+        mux.arg("-ac").arg(info.2.to_string());
+        mux.arg("-i").arg(&info.0);
+    }
+    if mic_info.is_some() && sys_info.is_some() {
+        mux.args([
+            "-filter_complex",
+            "[1:a]aresample=48000,aformat=channel_layouts=stereo[a1];[2:a]aresample=48000,aformat=channel_layouts=stereo[a2];[a1][a2]amix=inputs=2:duration=longest,volume=2,alimiter=limit=0.95[a]",
+            "-map",
+            "0:v",
+            "-map",
+            "[a]",
+        ]);
+    } else {
+        mux.args(["-map", "0:v", "-map", "1:a"]);
+    }
+    mux.args(["-c:v", "copy", "-c:a", "aac", "-b:a", "160k"]);
+    mux.arg("-t").arg(format!("{:.3}", secs.max(0.1)));
+    mux.args(["-movflags", "+faststart"]);
+    mux.arg(&out);
+    mux.stdout(Stdio::null()).stderr(Stdio::piped());
+    no_window(&mut mux);
+
+    let result = match mux.spawn() {
+        Ok(mut c) => match wait_timeout(&mut c, 120) {
+            Ok(s) if s.success() => Ok(()),
+            Ok(_) => Err(read_stderr(&mut c)),
+            Err(e) => Err(e),
+        },
+        Err(e) => Err(e.to_string()),
+    };
+    let _ = std::fs::remove_file(mic_info.as_ref().map(|i| i.0.clone()).unwrap_or_default());
+    let _ = std::fs::remove_file(sys_info.as_ref().map(|i| i.0.clone()).unwrap_or_default());
+    match result {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&video_tmp);
+            Ok(out)
+        }
+        Err(e) => {
+            // keep the picture even if adding sound failed
+            std::fs::rename(&video_tmp, &out).map_err(|e2| format!("could not save the recording: {e2}"))?;
+            add_note(&shared, &format!("Saved without sound ({e})"));
+            Ok(out)
+        }
+    }
 }

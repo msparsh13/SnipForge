@@ -1,37 +1,68 @@
-//! Shared look & feel: theme colours and painted icons / cards.
+//! Shared look & feel: LIGHT theme palette, painted icons and cards.
 use eframe::egui::{self, pos2, vec2, Align2, Color32, FontId, Rect, Sense, Stroke};
 
-pub const ACCENT: Color32 = Color32::from_rgb(76, 194, 255);
-pub const BG: Color32 = Color32::from_rgb(24, 26, 30);
-pub const PANEL: Color32 = Color32::from_rgb(32, 35, 40);
-pub const CARD: Color32 = Color32::from_rgb(42, 46, 53);
-pub const CARD_HOVER: Color32 = Color32::from_rgb(54, 59, 68);
-pub const DANGER: Color32 = Color32::from_rgb(255, 90, 95);
+// ---- palette (light) ----
+pub const BG: Color32 = Color32::from_rgb(245, 246, 250); // window background
+pub const PANEL: Color32 = Color32::from_rgb(255, 255, 255); // toolbars / side panels
+pub const CARD: Color32 = Color32::from_rgb(255, 255, 255);
+pub const CARD_HOVER: Color32 = Color32::from_rgb(238, 243, 255);
+pub const BORDER: Color32 = Color32::from_rgb(220, 225, 234);
+pub const CANVAS: Color32 = Color32::from_rgb(228, 231, 238); // behind the screenshot
+pub const ACCENT: Color32 = Color32::from_rgb(37, 99, 235); // blue
+pub const ACCENT_SOFT: Color32 = Color32::from_rgb(225, 235, 255);
+pub const TEXT: Color32 = Color32::from_rgb(28, 32, 41);
+pub const TEXT_DIM: Color32 = Color32::from_rgb(104, 112, 128);
+pub const DANGER: Color32 = Color32::from_rgb(220, 53, 69);
+pub const WARN: Color32 = Color32::from_rgb(200, 110, 0);
+pub const SUCCESS: Color32 = Color32::from_rgb(18, 128, 74);
+/// Used only on top of the dimmed screenshot in the capture overlay.
+pub const OVERLAY: Color32 = Color32::from_rgb(76, 194, 255);
 
 pub fn apply_theme(ctx: &egui::Context) {
+    let mut v = egui::Visuals::light();
+    v.panel_fill = BG;
+    v.window_fill = PANEL;
+    v.extreme_bg_color = Color32::WHITE; // text boxes
+    v.faint_bg_color = Color32::from_rgb(241, 243, 248);
+    v.window_stroke = Stroke::new(1.0, BORDER);
+    v.window_rounding = egui::Rounding::same(12.0);
+    v.hyperlink_color = ACCENT;
+    v.selection.bg_fill = Color32::from_rgba_unmultiplied(37, 99, 235, 70);
+    v.selection.stroke = Stroke::new(1.0, ACCENT);
+
+    let r = egui::Rounding::same(8.0);
+    let soft = Color32::from_rgb(226, 230, 238); // slider rails, check boxes
+
+    v.widgets.noninteractive.rounding = r;
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
+
+    v.widgets.inactive.rounding = r;
+    v.widgets.inactive.bg_fill = soft;
+    v.widgets.inactive.weak_bg_fill = Color32::WHITE; // buttons
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
+
+    v.widgets.hovered.rounding = r;
+    v.widgets.hovered.bg_fill = Color32::from_rgb(214, 224, 248);
+    v.widgets.hovered.weak_bg_fill = ACCENT_SOFT;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT);
+    v.widgets.hovered.fg_stroke = Stroke::new(1.5, TEXT);
+
+    v.widgets.active.rounding = r;
+    v.widgets.active.bg_fill = Color32::from_rgb(190, 210, 250);
+    v.widgets.active.weak_bg_fill = Color32::from_rgb(205, 222, 255);
+    v.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
+    v.widgets.active.fg_stroke = Stroke::new(2.0, TEXT);
+
+    v.widgets.open.rounding = r;
+    v.widgets.open.bg_fill = soft;
+    v.widgets.open.weak_bg_fill = Color32::WHITE;
+    v.widgets.open.bg_stroke = Stroke::new(1.0, BORDER);
+    v.widgets.open.fg_stroke = Stroke::new(1.0, TEXT);
+
+    ctx.set_visuals(v);
     ctx.style_mut(|s| {
-        let v = &mut s.visuals;
-        v.dark_mode = true;
-        v.panel_fill = BG;
-        v.window_fill = PANEL;
-        v.extreme_bg_color = Color32::from_rgb(18, 19, 22);
-        v.faint_bg_color = PANEL;
-        v.window_rounding = egui::Rounding::same(10.0);
-        v.selection.bg_fill = ACCENT.gamma_multiply(0.45);
-        v.selection.stroke = Stroke::new(1.0, ACCENT);
-        v.hyperlink_color = ACCENT;
-        let r = egui::Rounding::same(7.0);
-        v.widgets.noninteractive.rounding = r;
-        v.widgets.inactive.rounding = r;
-        v.widgets.hovered.rounding = r;
-        v.widgets.active.rounding = r;
-        v.widgets.open.rounding = r;
-        v.widgets.inactive.bg_fill = CARD;
-        v.widgets.inactive.weak_bg_fill = CARD;
-        v.widgets.hovered.bg_fill = CARD_HOVER;
-        v.widgets.hovered.weak_bg_fill = CARD_HOVER;
-        v.widgets.active.bg_fill = ACCENT.gamma_multiply(0.5);
-        v.widgets.active.weak_bg_fill = ACCENT.gamma_multiply(0.5);
         s.spacing.item_spacing = vec2(8.0, 8.0);
         s.spacing.button_padding = vec2(12.0, 7.0);
     });
@@ -82,9 +113,7 @@ pub fn card(ui: &mut egui::Ui, icon: Icon, title: &str, sub: &str, size: egui::V
     let p = ui.painter_at(rect);
     let hovered = resp.hovered();
     p.rect_filled(rect, 12.0, if hovered { CARD_HOVER } else { CARD });
-    if hovered {
-        p.rect_stroke(rect, 12.0, Stroke::new(1.5, ACCENT));
-    }
+    p.rect_stroke(rect, 12.0, Stroke::new(if hovered { 1.5 } else { 1.0 }, if hovered { ACCENT } else { BORDER }));
     let ic = Rect::from_center_size(pos2(rect.min.x + 36.0, rect.center().y), vec2(34.0, 34.0));
     draw_big_icon(&p, ic, icon);
     p.text(
@@ -92,23 +121,23 @@ pub fn card(ui: &mut egui::Ui, icon: Icon, title: &str, sub: &str, size: egui::V
         Align2::LEFT_CENTER,
         title,
         FontId::proportional(16.0),
-        Color32::WHITE,
+        TEXT,
     );
     p.text(
         pos2(rect.min.x + 72.0, rect.center().y + 12.0),
         Align2::LEFT_CENTER,
         sub,
         FontId::proportional(12.0),
-        Color32::from_gray(150),
+        TEXT_DIM,
     );
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Primary (accent) button.
 pub fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.add(egui::Button::new(egui::RichText::new(text).color(Color32::BLACK).strong()).fill(ACCENT))
+    ui.add(egui::Button::new(egui::RichText::new(text).color(Color32::WHITE).strong()).fill(ACCENT))
 }
 
 pub fn danger_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.add(egui::Button::new(egui::RichText::new(text).color(Color32::WHITE).strong()).fill(Color32::from_rgb(210, 55, 60)))
+    ui.add(egui::Button::new(egui::RichText::new(text).color(Color32::WHITE).strong()).fill(DANGER))
 }

@@ -8,10 +8,9 @@ use std::os::windows::process::CommandExt;
 
 use image::RgbaImage;
 
+/// Folder for screenshots (honours the custom folder in Settings).
 pub fn captures_dir() -> PathBuf {
-    let d = dirs::picture_dir().unwrap_or_else(|| PathBuf::from(".")).join("SnipForge");
-    let _ = std::fs::create_dir_all(&d);
-    d
+    crate::config::Settings::load().shots_path()
 }
 
 pub fn timestamp() -> String {
@@ -40,6 +39,13 @@ pub fn reveal_in_explorer(p: &Path) {
 pub fn open_file(p: &Path) {
     let mut c = Command::new("cmd");
     c.args(["/C", "start", ""]).arg(p);
+    no_window(&mut c);
+    let _ = c.spawn();
+}
+
+pub fn open_url(url: &str) {
+    let mut c = Command::new("cmd");
+    c.args(["/C", "start", ""]).arg(url);
     no_window(&mut c);
     let _ = c.spawn();
 }
@@ -96,6 +102,24 @@ pub fn recording_active() -> bool {
         .and_then(|t| t.elapsed().ok())
         .map(|d| d.as_secs_f32() < 3.0)
         .unwrap_or(false)
+}
+
+fn pause_path() -> PathBuf {
+    std::env::temp_dir().join("snipforge_recording.pause")
+}
+
+pub fn request_pause() {
+    let _ = std::fs::write(pause_path(), "pause");
+}
+
+pub fn take_pause_request() -> bool {
+    let p = pause_path();
+    if p.exists() {
+        let _ = std::fs::remove_file(p);
+        true
+    } else {
+        false
+    }
 }
 
 pub fn request_stop() {

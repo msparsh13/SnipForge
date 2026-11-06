@@ -15,6 +15,7 @@ enum Cmd {
     Full,
     Ocr,
     Record,
+    Pause,
 }
 
 /// Keep the returned manager alive for as long as the app runs.
@@ -27,6 +28,7 @@ pub fn setup() -> Option<GlobalHotKeyManager> {
         (Code::KeyF, Cmd::Full),
         (Code::KeyT, Cmd::Ocr),
         (Code::KeyR, Cmd::Record),
+        (Code::KeyP, Cmd::Pause),
     ] {
         let hk = HotKey::new(Some(mods), code);
         let id = hk.id();
@@ -52,6 +54,11 @@ pub fn setup() -> Option<GlobalHotKeyManager> {
                     Cmd::Region => util::spawn_worker("region", None),
                     Cmd::Full => util::spawn_worker("full", None),
                     Cmd::Ocr => util::spawn_worker("ocr", None),
+                    Cmd::Pause => {
+                        if util::recording_active() {
+                            util::request_pause();
+                        }
+                    }
                     Cmd::Record => {
                         if util::recording_active() {
                             util::request_stop();

@@ -12,7 +12,32 @@ extern "system" {
     fn ShowWindow(hwnd: Hwnd, cmd: i32) -> i32;
     fn SetWindowDisplayAffinity(hwnd: Hwnd, affinity: u32) -> i32;
     fn FindWindowW(class: *const u16, title: *const u16) -> Hwnd;
+    fn SetWindowPos(hwnd: Hwnd, after: Hwnd, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+    fn SetForegroundWindow(hwnd: Hwnd) -> i32;
+    fn GetSystemMetrics(index: i32) -> i32;
+    fn SetProcessDpiAwarenessContext(value: isize) -> i32;
+    fn EnumDisplayMonitors(hdc: isize, clip: *const Rect4, cb: MonitorEnumProc, data: isize) -> i32;
+    fn GetMonitorInfoW(monitor: isize, info: *mut MonitorInfo) -> i32;
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Rect4 {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[repr(C)]
+struct MonitorInfo {
+    size: u32,
+    monitor: Rect4,
+    work: Rect4,
+    flags: u32,
+}
+
+type MonitorEnumProc = unsafe extern "system" fn(isize, isize, *mut Rect4, isize) -> i32;
 
 #[link(name = "kernel32")]
 extern "system" {
@@ -72,4 +97,75 @@ pub fn show_existing_launcher() -> bool {
             true
         }
     }
+}
+
+/// Make a window cover exactly this screen rectangle (physical pixels), above everything
+/// including the taskbar. Used for the capture overlay so it always fills the whole screen.
+pub fn cover_screen(title: &str, x: i32, y: i32, w: i32, h: i32) -> bool {
+    unsafe {
+        let t = wide(title);
+        let hwnd = FindWindowW(ptr::null(), t.as_ptr());
+        if hwnd == 0 {
+            return false;
+        }
+        // HWND_TOPMOST = -1, SWP_SHOWWINDOW = 0x0040
+        let ok = SetWindowPos(hwnd, -1, x, y, w, h, 0x0040) != 0;
+        SetForegroundWindow(hwnd);
+        ok
+    }
+}
+
+/// Undo "always on top" for a window (HWND_NOTOPMOST = -2; NOSIZE|NOMOVE|NOACTIVATE).
+pub fn release_topmost(title: &str) {
+    unsafe {
+        let t = wide(title);
+        let hwnd = FindWindowW(ptr::null(), t.as_ptr());
+        if hwnd != 0 {
+            SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+        }
+    }
+}
+
+/// Make the process per-monitor DPI aware so every coordinate is in real pixels.
+pub fn set_dpi_aware() {
+    unsafe {
+        SetProcessDpiAwarenessContext(-4); // PER_MONITOR_AWARE_V2
+    }
+}
+
+/// Bounding box of ALL monitors together: (x, y, width, height) in physical pixels. x/y can be negative.
+pub fn virtual_rect() -> (i32, i32, u32, u32) {
+    unsafe {
+        (
+            GetSystemMetrics(76),
+            GetSystemMetrics(77),
+            GetSystemMetrics(78).max(1) as u32,
+            GetSystemMetrics(79).max(1) as u32,
+        )
+    }
+}
+
+unsafe extern "system" fn monitor_cb(h: isize, _hdc: isize, _r: *mut Rect4, data: isize) -> i32 {
+    let list = &mut *(data as *mut Vec<(i32, i32, u32, u32)>);
+    let zero = Rect4 { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut mi = MonitorInfo { size: std::mem::size_of::<MonitorInfo>() as u32, monitor: zero, work: zero, flags: 0 };
+    if GetMonitorInfoW(h, &mut mi) != 0 {
+        list.push((
+            mi.monitor.left,
+            mi.monitor.top,
+            (mi.monitor.right - mi.monitor.left).max(1) as u32,
+            (mi.monitor.bottom - mi.monitor.top).max(1) as u32,
+        ));
+    }
+    1
+}
+
+/// Every monitor as (x, y, width, height), ordered left to right.
+pub fn monitors() -> Vec<(i32, i32, u32, u32)> {
+    let mut v: Vec<(i32, i32, u32, u32)> = Vec::new();
+    unsafe {
+        EnumDisplayMonitors(0, ptr::null(), monitor_cb, &mut v as *mut Vec<(i32, i32, u32, u32)> as isize);
+    }
+    v.sort_by_key(|m| (m.0, m.1));
+    v
 }

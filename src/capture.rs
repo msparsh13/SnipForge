@@ -6,6 +6,9 @@ use std::time::{Duration, Instant};
 use image::RgbaImage;
 use scrap::{Capturer, Display};
 
+use crate::gdi::GdiGrabber;
+use crate::winapi;
+
 /// Grab the whole primary display as RGBA (physical pixels).
 pub fn grab_primary() -> Result<RgbaImage, String> {
     let display = Display::primary().map_err(|e| e.to_string())?;
@@ -48,4 +51,37 @@ pub fn crop(img: &RgbaImage, x: u32, y: u32, w: u32, h: u32) -> RgbaImage {
 /// Physical pixel size of the primary display.
 pub fn primary_size() -> Option<(u32, u32)> {
     Display::primary().ok().map(|d| (d.width() as u32, d.height() as u32))
+}
+
+fn looks_black(rgba: &[u8]) -> bool {
+    // sample pixels; a real desktop is never completely black
+    rgba.iter().step_by(4 * 997).all(|&b| b == 0)
+}
+
+fn gdi_grab(x: i32, y: i32, w: u32, h: u32) -> Result<RgbaImage, String> {
+    let mut g = GdiGrabber::new(x, y, w as i32, h as i32)?;
+    let data = g.grab();
+    let mut out = vec![0u8; data.len()];
+    for (src, dst) in data.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+        dst[0] = src[2]; // BGRA -> RGBA
+        dst[1] = src[1];
+        dst[2] = src[0];
+        dst[3] = 255;
+    }
+    if looks_black(&out) {
+        return Err("screen grab returned a black image".to_string());
+    }
+    RgbaImage::from_raw(w, h, out).ok_or_else(|| "bad frame".to_string())
+}
+
+/// Capture every screen into ONE image (all = true) or only the primary screen.
+/// Returns the image and the screen coordinates of its top-left corner.
+pub fn grab_screens(all: bool) -> Result<(RgbaImage, (i32, i32)), String> {
+    if all {
+        let (x, y, w, h) = winapi::virtual_rect();
+        if let Ok(img) = gdi_grab(x, y, w, h) {
+            return Ok((img, (x, y)));
+        }
+    }
+    grab_primary().map(|img| (img, (0, 0)))
 }

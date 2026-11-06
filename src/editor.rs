@@ -7,7 +7,7 @@ use image::RgbaImage;
 
 use crate::capture;
 use crate::render::{self, Ann};
-use crate::ui::{ACCENT, CARD, PANEL};
+use crate::ui::{ACCENT, ACCENT_SOFT, BORDER, CANVAS, PANEL, TEXT_DIM};
 use crate::util;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -21,9 +21,10 @@ pub enum Tool {
     Step,
     Blur,
     Crop,
+    Read,
 }
 
-const TOOLS: [(Tool, &str); 9] = [
+const TOOLS: [(Tool, &str); 10] = [
     (Tool::Arrow, "Arrow"),
     (Tool::Rect, "Rectangle"),
     (Tool::Ellipse, "Ellipse"),
@@ -33,6 +34,7 @@ const TOOLS: [(Tool, &str); 9] = [
     (Tool::Step, "Step"),
     (Tool::Blur, "Blur"),
     (Tool::Crop, "Crop"),
+    (Tool::Read, "Read text"),
 ];
 
 const SWATCHES: [[u8; 3]; 8] = [
@@ -50,6 +52,7 @@ pub enum EditorEvent {
     None,
     NewRegion,
     NewFull,
+    ExtractText(RgbaImage),
 }
 
 type CropRect = (u32, u32, u32, u32);
@@ -125,7 +128,7 @@ fn draw_tool_icon(p: &egui::Painter, r: Rect, tool: Tool, c: Color32) {
         }
         Tool::Step => {
             p.circle_filled(r.center(), 10.0, c);
-            p.text(r.center(), Align2::CENTER_CENTER, "1", FontId::proportional(13.0), Color32::BLACK);
+            p.text(r.center(), Align2::CENTER_CENTER, "1", FontId::proportional(13.0), Color32::WHITE);
         }
         Tool::Blur => {
             let cell = r.height() / 3.0;
@@ -137,6 +140,10 @@ fn draw_tool_icon(p: &egui::Painter, r: Rect, tool: Tool, c: Color32) {
                     }
                 }
             }
+        }
+        Tool::Read => {
+            p.text(r.center(), Align2::CENTER_CENTER, "Aa", FontId::proportional(15.0), c);
+            p.rect_stroke(r.shrink(1.0), 3.0, Stroke::new(1.5, c.gamma_multiply(0.7)));
         }
         Tool::Crop => {
             let l = 7.0;
@@ -154,9 +161,9 @@ fn tool_button(ui: &mut egui::Ui, selected: bool, tool: Tool, label: &str) -> eg
     let (rect, resp) = ui.allocate_exact_size(vec2(62.0, 52.0), Sense::click());
     let p = ui.painter_at(rect);
     let bg = if selected {
-        ACCENT.gamma_multiply(0.28)
+        ACCENT_SOFT
     } else if resp.hovered() {
-        Color32::from_white_alpha(16)
+        Color32::from_black_alpha(10)
     } else {
         Color32::TRANSPARENT
     };
@@ -165,13 +172,13 @@ fn tool_button(ui: &mut egui::Ui, selected: bool, tool: Tool, label: &str) -> eg
         p.rect_stroke(rect, 8.0, Stroke::new(1.5, ACCENT));
     }
     let icon_rect = Rect::from_center_size(rect.center_top() + vec2(0.0, 19.0), vec2(26.0, 22.0));
-    draw_tool_icon(&p, icon_rect, tool, if selected { ACCENT } else { Color32::from_gray(215) });
+    draw_tool_icon(&p, icon_rect, tool, if selected { ACCENT } else { Color32::from_rgb(58, 64, 78) });
     p.text(
         rect.center_bottom() - vec2(0.0, 9.0),
         Align2::CENTER_CENTER,
         label,
         FontId::proportional(11.0),
-        Color32::from_gray(185),
+        TEXT_DIM,
     );
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -383,6 +390,9 @@ impl Editor {
                     if ui.button("Save").clicked() {
                         self.do_save(status);
                     }
+                    if ui.button("Extract text").clicked() {
+                        ev = EditorEvent::ExtractText(self.base.clone());
+                    }
                     if ui.button("Save as...").clicked() {
                         *status = match self.save_as() {
                             Ok(()) => format!("Saved  {}", self.path.display()),
@@ -404,7 +414,7 @@ impl Editor {
         if let Some(r) = self.pending_crop {
             let size = self.rect_to_crop(r).map(|c| format!("{} x {} px", c.2, c.3)).unwrap_or_default();
             egui::TopBottomPanel::top("crop_bar")
-                .frame(egui::Frame::none().fill(ACCENT.gamma_multiply(0.22)).inner_margin(egui::Margin::symmetric(12.0, 6.0)))
+                .frame(egui::Frame::none().fill(ACCENT_SOFT).inner_margin(egui::Margin::symmetric(12.0, 6.0)))
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(format!("Crop to {size}"));
@@ -440,6 +450,7 @@ impl Editor {
                         for c in SWATCHES {
                             let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
                             ui.painter().rect_filled(r, 5.0, Color32::from_rgb(c[0], c[1], c[2]));
+                            ui.painter().rect_stroke(r, 5.0, Stroke::new(1.0, BORDER));
                             if self.color == c {
                                 ui.painter().rect_stroke(r.expand(2.0), 6.0, Stroke::new(2.0, ACCENT));
                             }
@@ -450,7 +461,7 @@ impl Editor {
                     });
                     ui.color_edit_button_srgb(&mut self.color);
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Size").size(11.0).color(Color32::from_gray(160)));
+                    ui.label(egui::RichText::new("Size").size(11.0).color(TEXT_DIM));
                     ui.spacing_mut().slider_width = 56.0;
                     ui.add(egui::Slider::new(&mut self.width, 1.0..=24.0).show_value(false));
                 });
@@ -459,14 +470,14 @@ impl Editor {
         egui::TopBottomPanel::bottom("status")
             .frame(egui::Frame::none().fill(PANEL).inner_margin(egui::Margin::symmetric(12.0, 5.0)))
             .show(ctx, |ui| {
-                ui.label(egui::RichText::new(status.as_str()).size(12.0).color(Color32::from_gray(170)));
+                ui.label(egui::RichText::new(status.as_str()).size(12.0).color(TEXT_DIM));
             });
 
         // ---- canvas
         let col = self.color32();
         let tool = self.tool;
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(Color32::from_rgb(20, 21, 24)).inner_margin(egui::Margin::same(12.0)))
+            .frame(egui::Frame::none().fill(CANVAS).inner_margin(egui::Margin::same(12.0)))
             .show(ctx, |ui| {
                 let avail = ui.available_rect_before_wrap();
                 let (iw, ih) = (self.base.width() as f32, self.base.height() as f32);
@@ -476,7 +487,7 @@ impl Editor {
                 let resp = ui.allocate_rect(rect, Sense::click_and_drag());
                 let painter = ui.painter_at(avail);
 
-                painter.rect_filled(rect.expand(1.0), 0.0, Color32::from_gray(60));
+                painter.rect_filled(rect.expand(1.0), 0.0, Color32::from_rgb(190, 196, 208));
                 if let Some(tex) = &self.tex {
                     painter.image(tex.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                 }
@@ -526,6 +537,12 @@ impl Editor {
                                     if (d.cur - d.start).length() > 8.0 {
                                         self.pending_crop = Some(Rect::from_two_pos(d.start, d.cur));
                                     }
+                                } else if tool == Tool::Read {
+                                    if (d.cur - d.start).length() > 8.0 {
+                                        if let Some(c) = self.rect_to_crop(Rect::from_two_pos(d.start, d.cur)) {
+                                            ev = EditorEvent::ExtractText(capture::crop(&self.base, c.0, c.1, c.2, c.3));
+                                        }
+                                    }
                                 } else if let Some(a) = self.make_ann(&d) {
                                     self.commit_ann(a);
                                 }
@@ -564,7 +581,7 @@ impl Editor {
                             };
                             painter.add(Shape::line(pts, Stroke::new(w, c)));
                         }
-                        Tool::Crop => {
+                        Tool::Crop | Tool::Read => {
                             let r = Rect::from_two_pos(a, b);
                             draw_crop_overlay(&painter, rect, r);
                         }
@@ -605,7 +622,6 @@ impl Editor {
         } else if cancel {
             self.pending_text = None;
         }
-        let _ = CARD;
         ev
     }
 }

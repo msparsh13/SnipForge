@@ -1,9 +1,11 @@
 //! SnipForge (Rust edition) - screenshot, annotate, OCR and record on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audio;
 mod capture;
 mod config;
 mod editor;
+mod gdi;
 mod hotkeys;
 mod launcher;
 mod ocr;
@@ -16,6 +18,7 @@ mod winapi;
 mod worker;
 
 fn main() -> Result<(), eframe::Error> {
+    winapi::set_dpi_aware();
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 3 && args[1] == "--worker" {
         return worker::run(&args[2], args.get(3).cloned());
