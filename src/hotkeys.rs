@@ -16,6 +16,10 @@ enum Cmd {
     Ocr,
     Record,
     Pause,
+    RecordFull,
+    Scroll,
+    PinRegion,
+    History,
 }
 
 /// Keep the returned manager alive for as long as the app runs.
@@ -29,6 +33,10 @@ pub fn setup() -> Option<GlobalHotKeyManager> {
         (Code::KeyT, Cmd::Ocr),
         (Code::KeyR, Cmd::Record),
         (Code::KeyP, Cmd::Pause),
+        (Code::KeyV, Cmd::RecordFull),
+        (Code::KeyS, Cmd::Scroll),
+        (Code::KeyN, Cmd::PinRegion),
+        (Code::KeyH, Cmd::History),
     ] {
         let hk = HotKey::new(Some(mods), code);
         let id = hk.id();
@@ -54,6 +62,22 @@ pub fn setup() -> Option<GlobalHotKeyManager> {
                     Cmd::Region => util::spawn_worker("region", None),
                     Cmd::Full => util::spawn_worker("full", None),
                     Cmd::Ocr => util::spawn_worker("ocr", None),
+                    Cmd::Scroll => {
+                        if util::recording_active() {
+                            util::request_stop(); // also stops a running scrolling capture
+                        } else {
+                            util::spawn_worker("scroll", None);
+                        }
+                    }
+                    Cmd::PinRegion => util::spawn_worker("pinregion", None),
+                    Cmd::History => util::spawn_worker("history", None),
+                    Cmd::RecordFull => {
+                        if util::recording_active() {
+                            util::request_stop();
+                        } else {
+                            util::spawn_worker("recordfull", None);
+                        }
+                    }
                     Cmd::Pause => {
                         if util::recording_active() {
                             util::request_pause();

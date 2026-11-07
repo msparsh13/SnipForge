@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 pub struct Settings {
     pub delay: u32,
     pub fps: u32,
+    pub rec_countdown: u32,
     pub mic: bool,
     pub system_audio: bool,
     pub auto_copy: bool,
@@ -22,6 +23,7 @@ impl Default for Settings {
         Settings {
             delay: 0,
             fps: 30,
+            rec_countdown: 3,
             mic: true,
             system_audio: false,
             auto_copy: true,
@@ -85,6 +87,7 @@ impl Settings {
                     match k.trim() {
                         "delay" => s.delay = v.parse().unwrap_or(s.delay),
                         "fps" => s.fps = v.parse().unwrap_or(s.fps),
+                        "rec_countdown" => s.rec_countdown = v.parse().unwrap_or(s.rec_countdown),
                         "mic" => s.mic = v == "1",
                         "system_audio" => s.system_audio = v == "1",
                         "auto_copy" => s.auto_copy = v == "1",
@@ -105,9 +108,10 @@ impl Settings {
     pub fn save(&self) {
         let b = |x: bool| if x { 1 } else { 0 };
         let text = format!(
-            "delay={}\nfps={}\nmic={}\nsystem_audio={}\nauto_copy={}\nall_screens={}\nsave_ocr_text={}\nshots_dir={}\nvideos_dir={}\ntext_dir={}\nengine_dir={}\n",
+            "delay={}\nfps={}\nrec_countdown={}\nmic={}\nsystem_audio={}\nauto_copy={}\nall_screens={}\nsave_ocr_text={}\nshots_dir={}\nvideos_dir={}\ntext_dir={}\nengine_dir={}\n",
             self.delay,
             self.fps,
+            self.rec_countdown,
             b(self.mic),
             b(self.system_audio),
             b(self.auto_copy),

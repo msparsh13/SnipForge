@@ -15,9 +15,18 @@ extern "system" {
     fn SetWindowPos(hwnd: Hwnd, after: Hwnd, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
     fn SetForegroundWindow(hwnd: Hwnd) -> i32;
     fn GetSystemMetrics(index: i32) -> i32;
+    fn SetCursorPos(x: i32, y: i32) -> i32;
+    fn GetCursorPos(p: *mut Point) -> i32;
+    fn mouse_event(flags: u32, dx: i32, dy: i32, data: i32, extra: usize);
     fn SetProcessDpiAwarenessContext(value: isize) -> i32;
     fn EnumDisplayMonitors(hdc: isize, clip: *const Rect4, cb: MonitorEnumProc, data: isize) -> i32;
     fn GetMonitorInfoW(monitor: isize, info: *mut MonitorInfo) -> i32;
+}
+
+#[repr(C)]
+struct Point {
+    x: i32,
+    y: i32,
 }
 
 #[repr(C)]
@@ -168,4 +177,37 @@ pub fn monitors() -> Vec<(i32, i32, u32, u32)> {
     }
     v.sort_by_key(|m| (m.0, m.1));
     v
+}
+
+/// Pointer position in screen pixels.
+pub fn cursor_pos() -> (i32, i32) {
+    let mut p = Point { x: 0, y: 0 };
+    unsafe {
+        GetCursorPos(&mut p);
+    }
+    (p.x, p.y)
+}
+
+pub fn set_cursor(x: i32, y: i32) {
+    unsafe {
+        SetCursorPos(x, y);
+    }
+}
+
+/// Turn the mouse wheel (negative = scroll down; 120 = one notch).
+pub fn wheel(delta: i32) {
+    unsafe {
+        mouse_event(0x0800, 0, 0, delta, 0); // MOUSEEVENTF_WHEEL
+    }
+}
+
+/// Keep a window above all others without moving or resizing it.
+pub fn make_topmost(title: &str) {
+    unsafe {
+        let t = wide(title);
+        let hwnd = FindWindowW(ptr::null(), t.as_ptr());
+        if hwnd != 0 {
+            SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // HWND_TOPMOST, NOSIZE|NOMOVE|NOACTIVATE
+        }
+    }
 }

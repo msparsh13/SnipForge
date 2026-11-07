@@ -54,8 +54,8 @@ pub fn primary_size() -> Option<(u32, u32)> {
 }
 
 fn looks_black(rgba: &[u8]) -> bool {
-    // sample pixels; a real desktop is never completely black
-    rgba.iter().step_by(4 * 997).all(|&b| b == 0)
+    // sample whole pixels (all colour channels); a real desktop is never completely black
+    rgba.chunks_exact(4).step_by(997).all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0)
 }
 
 fn gdi_grab(x: i32, y: i32, w: u32, h: u32) -> Result<RgbaImage, String> {

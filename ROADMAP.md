@@ -12,6 +12,17 @@
 (The Python edition in `snipforge.zip` already has working versions of all of these, so they
 are a port job, not new design.)
 
+## Done in v0.7
+- Scrolling capture, pin to screen, searchable history (with text inside screenshots), video editor (cut, speed, captions)
+
+## Waiting for approval
+- Automatic caption generator (speech to text). Optional download; size notice sent in chat first.
+
+## Done in v0.6
+- Mic and Audio buttons always on the recording bar; either can be switched on mid-recording
+- Countdown before recording starts (configurable)
+- One-click whole-screen recording (Ctrl+Alt+V)
+
 ## Done in v0.5
 - Recording fixed: Stop now always finishes and saves (it used to hang when the microphone was on)
 - Pause / resume (button + Ctrl+Alt+P), recorded time excludes pauses

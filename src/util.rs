@@ -62,6 +62,12 @@ pub fn spawn_worker(kind: &str, extra: Option<&str>) {
     }
 }
 
+/// Start a worker that needs a file path (pin, open, video editor).
+pub fn spawn_worker_path(kind: &str, path: &Path) {
+    let s = path.to_string_lossy().to_string();
+    spawn_worker(kind, Some(&s));
+}
+
 pub fn copy_image(img: &RgbaImage) -> Result<(), String> {
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
     cb.set_image(arboard::ImageData {
@@ -70,6 +76,16 @@ pub fn copy_image(img: &RgbaImage) -> Result<(), String> {
         bytes: Cow::Owned(img.as_raw().clone()),
     })
     .map_err(|e| e.to_string())
+}
+
+pub fn temp_png(prefix: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("{prefix}_{}_{}.png", timestamp(), std::process::id()))
+}
+
+pub fn clipboard_image() -> Option<RgbaImage> {
+    let mut cb = arboard::Clipboard::new().ok()?;
+    let d = cb.get_image().ok()?;
+    RgbaImage::from_raw(d.width as u32, d.height as u32, d.bytes.into_owned())
 }
 
 pub fn copy_text(text: &str) -> Result<(), String> {

@@ -31,8 +31,8 @@ struct Shared {
     paused: Arc<AtomicBool>,
     mic_on: Arc<AtomicBool>,
     sys_on: Arc<AtomicBool>,
-    mic_ok: AtomicBool,
-    sys_ok: AtomicBool,
+    mic_failed: AtomicBool,
+    sys_failed: AtomicBool,
     active_ms: AtomicU64,
     note: Mutex<String>,
 }
@@ -46,8 +46,8 @@ impl Recorder {
     /// region = (x, y, width, height) in screen pixels. x/y may be negative (monitors left of / above the primary).
     pub fn start(ctx: egui::Context, region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, ffmpeg: PathBuf) -> Recorder {
         let shared = Arc::new(Shared::default());
-        shared.mic_on.store(true, Ordering::SeqCst);
-        shared.sys_on.store(true, Ordering::SeqCst);
+        shared.mic_on.store(opts.mic, Ordering::SeqCst);
+        shared.sys_on.store(opts.system, Ordering::SeqCst);
         let s2 = shared.clone();
         let handle = thread::spawn(move || {
             let r = run(region, opts, out, s2, ffmpeg);
@@ -71,11 +71,12 @@ impl Recorder {
     pub fn active_secs(&self) -> f32 {
         self.shared.active_ms.load(Ordering::Relaxed) as f32 / 1000.0
     }
-    pub fn mic_available(&self) -> bool {
-        self.shared.mic_ok.load(Ordering::Relaxed)
+    /// True if the microphone / device audio could not be started (no device, access denied...).
+    pub fn mic_failed(&self) -> bool {
+        self.shared.mic_failed.load(Ordering::Relaxed)
     }
-    pub fn sys_available(&self) -> bool {
-        self.shared.sys_ok.load(Ordering::Relaxed)
+    pub fn sys_failed(&self) -> bool {
+        self.shared.sys_failed.load(Ordering::Relaxed)
     }
     pub fn mic_on(&self) -> bool {
         self.shared.mic_on.load(Ordering::Relaxed)
@@ -134,7 +135,7 @@ impl Track {
         let ch = self.cap.channels as u64;
         let per_sec = self.cap.rate as f64 * ch as f64;
         let expected = (active_secs * per_sec) as u64;
-        if self.written + (per_sec * 0.15) as u64 < expected {
+        if (self.written + (per_sec * 0.15) as u64 )< expected {
             let deficit = (expected - self.written) / ch * ch;
             let zeros = [0u8; 4096];
             let mut left = deficit * 4;
@@ -219,29 +220,13 @@ fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc
         gdi = Some(GdiGrabber::new(ax, ay, rw as i32, rh as i32)?);
     }
 
-    // audio tracks (failures are not fatal: the recording continues without that source)
+    // audio tracks are opened on demand: at the start if enabled, or later when Mic / Audio is switched on
     let stamp = crate::util::timestamp();
     let tmpdir = std::env::temp_dir();
+    let mic_path = tmpdir.join(format!("snipforge_mic_{stamp}.raw"));
+    let sys_path = tmpdir.join(format!("snipforge_sys_{stamp}.raw"));
     let mut mic: Option<Track> = None;
     let mut sys: Option<Track> = None;
-    if opts.mic {
-        match Track::open(false, &shared, tmpdir.join(format!("snipforge_mic_{stamp}.raw"))) {
-            Ok(t) => {
-                shared.mic_ok.store(true, Ordering::Relaxed);
-                mic = Some(t);
-            }
-            Err(e) => add_note(&shared, &format!("Microphone not recorded: {e}")),
-        }
-    }
-    if opts.system {
-        match Track::open(true, &shared, tmpdir.join(format!("snipforge_sys_{stamp}.raw"))) {
-            Ok(t) => {
-                shared.sys_ok.store(true, Ordering::Relaxed);
-                sys = Some(t);
-            }
-            Err(e) => add_note(&shared, &format!("Device audio not recorded: {e}")),
-        }
-    }
 
     // video encoder: reads raw frames from stdin and ends when stdin is closed
     let video_tmp = out.with_extension("video.tmp.mp4");
@@ -249,7 +234,14 @@ fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc
     cmd.args(["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgra"]);
     cmd.arg("-video_size").arg(format!("{}x{}", rw, rh));
     cmd.arg("-framerate").arg(fps.to_string());
-    cmd.args(["-i", "-", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"]);
+    cmd.args(["-i", "-", "-an"]);
+    if rw > 3840 || rh > 2160 {
+        // several monitors at once: keep the file/encoder manageable (max 3840 x 2160, aspect ratio kept)
+        cmd.args(["-vf", "scale=w=3840:h=2160:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"]);
+        add_note(&shared, "The recorded area is very large, so the video was scaled down to fit 3840 px.");
+    }
+    let preset = if (rw as u64) * (rh as u64) > 2_600_000 { "ultrafast" } else { "veryfast" };
+    cmd.args(["-c:v", "libx264", "-preset", preset, "-crf", "23", "-pix_fmt", "yuv420p"]);
     cmd.arg(&video_tmp);
     cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
     no_window(&mut cmd);
@@ -268,6 +260,25 @@ fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc
     let mut active = Duration::ZERO;
 
     'outer: while !shared.stop.load(Ordering::SeqCst) {
+        // ---- start an audio source the first time it is switched on (earlier time is filled with silence)
+        if mic.is_none() && !shared.mic_failed.load(Ordering::Relaxed) && shared.mic_on.load(Ordering::Relaxed) {
+            match Track::open(false, &shared, mic_path.clone()) {
+                Ok(t) => mic = Some(t),
+                Err(e) => {
+                    shared.mic_failed.store(true, Ordering::Relaxed);
+                    add_note(&shared, &format!("Microphone not recorded: {e}"));
+                }
+            }
+        }
+        if sys.is_none() && !shared.sys_failed.load(Ordering::Relaxed) && shared.sys_on.load(Ordering::Relaxed) {
+            match Track::open(true, &shared, sys_path.clone()) {
+                Ok(t) => sys = Some(t),
+                Err(e) => {
+                    shared.sys_failed.store(true, Ordering::Relaxed);
+                    add_note(&shared, &format!("Device audio not recorded: {e}"));
+                }
+            }
+        }
         // ---- pause handling: the clock stops, no frames/samples are recorded
         let is_paused = shared.paused.load(Ordering::SeqCst);
         match (is_paused, pause_started) {

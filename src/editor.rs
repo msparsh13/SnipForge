@@ -217,7 +217,7 @@ impl Editor {
 
     fn refresh_tex(&mut self, ctx: &egui::Context) {
         let img = self.rendered();
-        let ci = egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw());
+        let ci = crate::ui::color_image(&img);
         self.tex = Some(ctx.load_texture("shot", ci, egui::TextureOptions::LINEAR));
         self.dirty = false;
     }
@@ -389,6 +389,13 @@ impl Editor {
                     }
                     if ui.button("Save").clicked() {
                         self.do_save(status);
+                    }
+                    if ui.button("Pin to screen").clicked() {
+                        let path = util::temp_png("snipforge_pin");
+                        if self.rendered().save(&path).is_ok() {
+                            let p = path.to_string_lossy().to_string();
+                            util::spawn_worker("pin", Some(&p));
+                        }
                     }
                     if ui.button("Extract text").clicked() {
                         ev = EditorEvent::ExtractText(self.base.clone());

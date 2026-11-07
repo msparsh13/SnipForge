@@ -1,4 +1,4 @@
-# SnipForge (Rust edition) v0.5
+# SnipForge (Rust edition) v0.7
 
 Native Windows screenshot / annotate / OCR / screen-recording tool (Rust + egui, one `.exe`).
 
@@ -19,7 +19,12 @@ Native Windows screenshot / annotate / OCR / screen-recording tool (Rust + egui,
 | Region capture -> editor | Ctrl+Alt+A |
 | Full-screen capture -> editor | Ctrl+Alt+F |
 | Grab text (OCR) -> clipboard | Ctrl+Alt+T |
-| Record region (press again to stop) | Ctrl+Alt+R |
+| Record a region (press again to stop) | Ctrl+Alt+R |
+| Record the whole screen (press again to stop) | Ctrl+Alt+V |
+| Pause / resume a recording | Ctrl+Alt+P |
+| Scrolling capture (press again to stop early) | Ctrl+Alt+S |
+| Pin a region on the screen | Ctrl+Alt+N |
+| History (search all captures) | Ctrl+Alt+H |
 
 Closing the main window only minimises it, so the hotkeys keep working. Use **Quit SnipForge** to exit.
 Default folders: screenshots `Pictures\SnipForge`, recordings `Videos\SnipForge`, text `Documents\SnipForge Text`.
@@ -36,7 +41,38 @@ The text appears in a window and is copied to the clipboard.
 Large screenshots open in a maximised editor window; the capture overlay is forced to cover the whole screen.
 Undo/redo (Ctrl+Z / Ctrl+Y), copy (Ctrl+C), save (Ctrl+S), save as. Crop: drag, then Enter to apply.
 
+## Scrolling capture
+Drag over a scrollable area (a web page, a document...). SnipForge scrolls it for you, grabs frames and stitches them
+into one tall image, then opens it in the editor. It stops at the end of the page, or press **Stop and save** /
+Ctrl+Alt+S. Keep the pointer over the page; move it away to reach the Stop button. Sticky headers are ignored.
+
+## Pin to screen
+Pin a region (Ctrl+Alt+N), the editor image (*Pin to screen* button), a history item, or the clipboard image.
+The pin floats above all windows: drag to move, mouse wheel to resize, double-click or Esc to close, right-click
+for Copy / Save / Reset size. Pins stay put while you capture other things.
+
+## History
+A searchable gallery of your screenshots, recordings and extracted text files (from your Save locations).
+Search by name or date. Press **Index text in screenshots** once and you can also search for words *inside* the
+screenshots (this reads each image with Windows OCR in the background and remembers the result).
+Double-click to open: images in the editor, videos in the video editor.
+
+## Video editor
+Open from the recording-finished screen, from History, or *Edit a video*.
+- Drag on the timeline to select a range, then **Delete selection** (cut the middle out) or **Keep only selection**.
+- **Speed** 0.5x to 2x. **Captions**: add by hand, import / export `.srt`, burned into the picture on export.
+- Export MP4, WebM, GIF or MP3 (audio only); sizes 1080p/720p/480p; three quality levels.
+- The preview is silent (a low-resolution look at the picture); the exported video keeps its sound.
+- Captions you type are saved next to the video as `name.srt` and reload next time.
+
 ## Recording
+- **Whole-screen recording:** the *Record full screen* card (or **Ctrl+Alt+V**) records everything without asking you
+  to select anything. It follows the *Capture area* setting: all screens together, or the primary screen only.
+- **Countdown:** after you choose what to record, a 3-2-1 card counts down before recording starts
+  (Settings -> *Countdown before recording*, 0 turns it off). Esc / Cancel aborts.
+- **The recording bar** always shows **Mic** and **Audio** (device audio) buttons. They can be switched on or off at
+  any moment, even if the option was off when you started. Time before you switch a source on is silent.
+  A button shows *n/a* if that source could not be started (no device / access denied).
 - **Start / stop:** Ctrl+Alt+R (or the Record card). Stop with the **Stop** button on the floating bar, or Ctrl+Alt+R again.
 - **Pause / resume:** the **Pause** button, or **Ctrl+Alt+P**. Paused time is cut out of the video and the sound.
 - **Microphone** and **device audio** (everything you hear through speakers / headphones) are separate options in
@@ -59,6 +95,10 @@ Press **Esc** or click **Cancel** in it to abort.
 - Recording works the same way: record a small part of a screen, one whole screen, or all screens together.
   Regions on the primary screen use fast DXGI capture; regions on other screens or spanning screens use GDI,
   which is heavier, so use a lower FPS for very large multi-screen areas.
+
+## Very large multi-screen areas
+- Screenshots wider than 8192 px are shown scaled-down on screen (a GPU limit) but saved at full resolution.
+- Recordings larger than 3840 x 2160 (for example two 4K monitors) are scaled down to fit that size.
 
 ## Save locations
 Settings -> *Save locations* lets you change the folder for screenshots, screen recordings, extracted text

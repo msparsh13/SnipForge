@@ -185,9 +185,31 @@ impl eframe::App for Launcher {
                         act = Some("record");
                     }
                 });
+                if ui::card(ui, Icon::RecordScreen, "Record full screen", "Ctrl+Alt+V   (follows the Capture area setting)", vec2(w * 2.0 + 8.0, 78.0)).clicked() {
+                    act = Some("recordfull");
+                }
+                ui.horizontal(|ui| {
+                    if ui::card(ui, Icon::Scroll, "Scrolling capture", "Ctrl+Alt+S", sz).clicked() {
+                        act = Some("scroll");
+                    }
+                    if ui::card(ui, Icon::Pin, "Pin to screen", "Ctrl+Alt+N", sz).clicked() {
+                        act = Some("pinregion");
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui::card(ui, Icon::History, "History", "Ctrl+Alt+H   search everything", sz).clicked() {
+                        act = Some("history");
+                    }
+                    if ui::card(ui, Icon::Film, "Edit a video", "cut, speed, captions", sz).clicked() {
+                        act = Some("video");
+                    }
+                });
                 ui.horizontal(|ui| {
                     if ui.button("Open image to edit...").clicked() {
                         act = Some("open");
+                    }
+                    if ui.button("Pin image from clipboard").clicked() {
+                        act = Some("pinclip");
                     }
                     if ui.button("Screenshots folder").clicked() {
                         act = Some("folder_shots");
@@ -213,6 +235,10 @@ impl eframe::App for Launcher {
                                     ui.selectable_value(&mut self.settings.fps, f, f.to_string());
                                 }
                             });
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Countdown before recording:");
+                        ui.add(egui::Slider::new(&mut self.settings.rec_countdown, 0..=10).suffix(" s"));
                     });
                     ui.checkbox(&mut self.settings.mic, "Record microphone");
                     ui.checkbox(&mut self.settings.system_audio, "Record device audio (what you hear through speakers / headphones)");
@@ -325,6 +351,16 @@ impl eframe::App for Launcher {
                     util::spawn_worker("open", Some(&path_str));
                 }
             }
+            Some("pinclip") => match util::clipboard_image() {
+                Some(img) => {
+                    let path = util::temp_png("snipforge_pin");
+                    if img.save(&path).is_ok() {
+                        let p = path.to_string_lossy().to_string();
+                        util::spawn_worker("pin", Some(&p));
+                    }
+                }
+                None => self.status = "There is no image on the clipboard.".to_string(),
+            },
             Some("folder_shots") => util::open_in_explorer(&self.settings.shots_path()),
             Some("folder_videos") => util::open_in_explorer(&self.settings.videos_path()),
             Some(kind) => util::spawn_worker(kind, None),

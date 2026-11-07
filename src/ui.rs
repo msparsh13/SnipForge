@@ -68,12 +68,31 @@ pub fn apply_theme(ctx: &egui::Context) {
     });
 }
 
+/// Texture-ready copy of an image. Very large multi-monitor images are shrunk for DISPLAY only
+/// (GPUs limit texture size, often to 8192 px). Saved files and selection coordinates keep full resolution.
+pub fn color_image(img: &image::RgbaImage) -> egui::ColorImage {
+    const MAX: u32 = 8192;
+    let (w, h) = img.dimensions();
+    if w <= MAX && h <= MAX {
+        return egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], img.as_raw());
+    }
+    let s = (MAX as f32 / w as f32).min(MAX as f32 / h as f32);
+    let (nw, nh) = (((w as f32 * s) as u32).max(1), ((h as f32 * s) as u32).max(1));
+    let small = image::imageops::resize(img, nw, nh, image::imageops::FilterType::Triangle);
+    egui::ColorImage::from_rgba_unmultiplied([nw as usize, nh as usize], small.as_raw())
+}
+
 #[derive(Clone, Copy)]
 pub enum Icon {
     Region,
     Screen,
     Text,
     Record,
+    RecordScreen,
+    Scroll,
+    Pin,
+    History,
+    Film,
 }
 
 fn draw_big_icon(p: &egui::Painter, r: Rect, icon: Icon) {
@@ -99,6 +118,37 @@ fn draw_big_icon(p: &egui::Painter, r: Rect, icon: Icon) {
         }
         Icon::Text => {
             p.text(r.center(), Align2::CENTER_CENTER, "Aa", FontId::proportional(24.0), ACCENT);
+        }
+        Icon::Scroll => {
+            p.rect_stroke(Rect::from_min_max(pos2(r.min.x + 6.0, r.min.y), pos2(r.max.x - 6.0, r.max.y)), 4.0, s);
+            for dy in [8.0, 14.0, 20.0] {
+                p.line_segment([pos2(r.min.x + 12.0, r.min.y + dy), pos2(r.max.x - 12.0, r.min.y + dy)], Stroke::new(1.5, ACCENT));
+            }
+            p.arrow(pos2(r.center().x, r.min.y + 24.0), vec2(0.0, 10.0), s);
+        }
+        Icon::Pin => {
+            p.circle_filled(pos2(r.center().x, r.min.y + 9.0), 8.0, ACCENT);
+            p.line_segment([pos2(r.center().x, r.min.y + 15.0), pos2(r.center().x, r.max.y)], s);
+        }
+        Icon::History => {
+            p.circle_stroke(r.center(), 16.0, s);
+            p.line_segment([r.center(), r.center() + vec2(0.0, -10.0)], s);
+            p.line_segment([r.center(), r.center() + vec2(8.0, 4.0)], s);
+        }
+        Icon::Film => {
+            p.rect_stroke(Rect::from_min_max(pos2(r.min.x, r.min.y + 4.0), pos2(r.max.x, r.max.y - 4.0)), 4.0, s);
+            p.add(egui::Shape::convex_polygon(
+                vec![pos2(r.center().x - 5.0, r.center().y - 7.0), pos2(r.center().x - 5.0, r.center().y + 7.0), pos2(r.center().x + 8.0, r.center().y)],
+                ACCENT,
+                Stroke::NONE,
+            ));
+        }
+        Icon::RecordScreen => {
+            let sd = Stroke::new(2.5, DANGER);
+            p.rect_stroke(Rect::from_min_max(r.min, pos2(r.max.x, r.max.y - 8.0)), 3.0, sd);
+            p.line_segment([pos2(r.center().x - 9.0, r.max.y - 1.0), pos2(r.center().x + 9.0, r.max.y - 1.0)], sd);
+            p.line_segment([pos2(r.center().x, r.max.y - 8.0), pos2(r.center().x, r.max.y - 1.0)], sd);
+            p.circle_filled(pos2(r.center().x, r.center().y - 4.0), 6.0, DANGER);
         }
         Icon::Record => {
             p.circle_stroke(r.center(), 16.0, Stroke::new(2.5, DANGER));
