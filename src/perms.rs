@@ -15,7 +15,7 @@ fn reg_value(key: &str) -> Option<String> {
     no_window(&mut c);
     let out = c.output().ok()?;
     if !out.status.success() {
-        return None;ś
+        return None;
     }
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     for line in text.lines() {
