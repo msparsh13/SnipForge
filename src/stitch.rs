@@ -143,7 +143,12 @@ impl ScrollJob {
             ctx.request_repaint();
             r
         });
-        ScrollJob { stop, steps, rows, handle: Some(handle) }
+        ScrollJob {
+            stop,
+            steps,
+            rows,
+            handle: Some(handle),
+        }
     }
 
     pub fn request_stop(&self) {
@@ -160,16 +165,29 @@ impl ScrollJob {
     }
 
     pub fn poll(&mut self) -> Option<Result<ScrollOutcome, String>> {
-        let done = self.handle.as_ref().map(|h| h.is_finished()).unwrap_or(false);
+        let done = self
+            .handle
+            .as_ref()
+            .map(|h| h.is_finished())
+            .unwrap_or(false);
         if !done {
             return None;
         }
         let h = self.handle.take()?;
-        Some(h.join().unwrap_or_else(|_| Err("scrolling capture crashed".to_string())))
+        Some(
+            h.join()
+                .unwrap_or_else(|_| Err("scrolling capture crashed".to_string())),
+        )
     }
 }
 
-fn run(ctx: &egui::Context, region: (i32, i32, u32, u32), stop: &AtomicBool, steps: &AtomicU32, rows_out: &AtomicU32) -> Result<ScrollOutcome, String> {
+fn run(
+    ctx: &egui::Context,
+    region: (i32, i32, u32, u32),
+    stop: &AtomicBool,
+    steps: &AtomicU32,
+    rows_out: &AtomicU32,
+) -> Result<ScrollOutcome, String> {
     let (x, y, w, h) = region;
     let (wu, hu) = (w as usize, h as usize);
     let mut grab = GdiGrabber::new(x, y, w as i32, h as i32)?;
@@ -231,6 +249,7 @@ fn run(ctx: &egui::Context, region: (i32, i32, u32, u32), stop: &AtomicBool, ste
             rgba.extend_from_slice(&[px[2], px[1], px[0], 255]);
         }
     }
-    let image = RgbaImage::from_raw(w, rows as u32, rgba).ok_or_else(|| "could not build the stitched image".to_string())?;
+    let image = RgbaImage::from_raw(w, rows as u32, rgba)
+        .ok_or_else(|| "could not build the stitched image".to_string())?;
     Ok(ScrollOutcome { image, note })
 }

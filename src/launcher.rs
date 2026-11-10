@@ -22,7 +22,12 @@ enum Tab {
     Settings,
 }
 
-const TABS: [(Tab, &str); 4] = [(Tab::Capture, "Capture"), (Tab::Record, "Record"), (Tab::Tools, "Tools"), (Tab::Settings, "Settings")];
+const TABS: [(Tab, &str); 4] = [
+    (Tab::Capture, "Capture"),
+    (Tab::Record, "Record"),
+    (Tab::Tools, "Tools"),
+    (Tab::Settings, "Settings"),
+];
 
 #[derive(Clone, Default)]
 struct TestSlot {
@@ -64,9 +69,17 @@ fn short_path(p: &str, max: usize) -> String {
 /// Returns true when the value changed.
 fn folder_row(ui: &mut egui::Ui, title: &str, value: &mut String, default: &Path) -> bool {
     let mut changed = false;
-    let shown = if value.is_empty() { default.to_string_lossy().to_string() } else { value.clone() };
+    let shown = if value.is_empty() {
+        default.to_string_lossy().to_string()
+    } else {
+        value.clone()
+    };
     ui.label(RichText::new(title).font(ui::semibold(14.0)));
-    ui.label(RichText::new(short_path(&shown, 60)).size(12.0).color(TEXT_DIM));
+    ui.label(
+        RichText::new(short_path(&shown, 60))
+            .size(12.0)
+            .color(TEXT_DIM),
+    );
     ui.horizontal(|ui| {
         if ui.button("Change...").clicked() {
             if let Some(p) = rfd::FileDialog::new().set_directory(&shown).pick_folder() {
@@ -74,7 +87,10 @@ fn folder_row(ui: &mut egui::Ui, title: &str, value: &mut String, default: &Path
                 changed = true;
             }
         }
-        if ui.add_enabled(!value.is_empty(), egui::Button::new("Use default")).clicked() {
+        if ui
+            .add_enabled(!value.is_empty(), egui::Button::new("Use default"))
+            .clicked()
+        {
             value.clear();
             changed = true;
         }
@@ -90,14 +106,26 @@ fn folder_row(ui: &mut egui::Ui, title: &str, value: &mut String, default: &Path
 fn target_text(t: &str, monitors: usize, all: bool) -> String {
     match t {
         "area" => "You drag a rectangle on the screen.".to_string(),
-        "full" if monitors > 1 && all => "Everything on all of your screens at once, with no selection.".to_string(),
+        "full" if monitors > 1 && all => {
+            "Everything on all of your screens at once, with no selection.".to_string()
+        }
         "full" => "The whole screen, with no selection.".to_string(),
-        m => format!("All of screen {}, with no selection.", m.trim_start_matches('m')),
+        m => format!(
+            "All of screen {}, with no selection.",
+            m.trim_start_matches('m')
+        ),
     }
 }
 
 /// "Listen for 3 seconds and tell me what you heard" - shows whether audio is really arriving.
-fn test_row(ui: &mut egui::Ui, ctx: &egui::Context, slot: &Arc<Mutex<TestSlot>>, label: &str, loopback: bool, silent_msg: &'static str) {
+fn test_row(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    slot: &Arc<Mutex<TestSlot>>,
+    label: &str,
+    loopback: bool,
+    silent_msg: &'static str,
+) {
     let state = slot.lock().map(|g| g.clone()).unwrap_or_default();
     ui.horizontal(|ui| {
         if state.running {
@@ -111,7 +139,9 @@ fn test_row(ui: &mut egui::Ui, ctx: &egui::Context, slot: &Arc<Mutex<TestSlot>>,
             let (slot2, ctx2) = (slot.clone(), ctx.clone());
             thread::spawn(move || {
                 let msg = match audio::test_level(loopback, 3.0) {
-                    Ok(p) if p > 0.02 => format!("Heard sound (loudest {}%).", (p * 100.0).round() as u32),
+                    Ok(p) if p > 0.02 => {
+                        format!("Heard sound (loudest {}%).", (p * 100.0).round() as u32)
+                    }
                     Ok(_) => silent_msg.to_string(),
                     Err(e) => e,
                 };
@@ -207,7 +237,12 @@ impl Launcher {
         ui::section(ui, "What do you want to capture?");
         ui::screen_map(ui, &self.monitors, &mut self.settings.cap_target);
         ui.add_space(8.0);
-        ui::target_pills(ui, &mut self.settings.cap_target, self.monitors.len().max(1), self.settings.all_screens);
+        ui::target_pills(
+            ui,
+            &mut self.settings.cap_target,
+            self.monitors.len().max(1),
+            self.settings.all_screens,
+        );
         let t = self.settings.cap_target.clone();
         let what = target_text(&t, self.monitors.len(), self.settings.all_screens);
         ui.label(RichText::new(what.as_str()).size(12.5).color(TEXT_DIM));
@@ -227,15 +262,33 @@ impl Launcher {
         }
         ui.add_space(8.0);
         let keys_scroll = if t == "area" { "Ctrl+Alt+S" } else { "" };
-        if ui::action_row(ui, "Scrolling screenshot", "Scrolls the page for you and joins it into one tall picture.", keys_scroll, false).clicked() {
+        if ui::action_row(
+            ui,
+            "Scrolling screenshot",
+            "Scrolls the page for you and joins it into one tall picture.",
+            keys_scroll,
+            false,
+        )
+        .clicked()
+        {
             util::spawn_worker("scroll", Some(&t));
         }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if ui.button("Copy text from the screen").on_hover_text("Drag over text and it goes to the clipboard (Ctrl+Alt+T)").clicked() {
+            if ui
+                .button("Copy text from the screen")
+                .on_hover_text("Drag over text and it goes to the clipboard (Ctrl+Alt+T)")
+                .clicked()
+            {
                 util::spawn_worker("ocr", None);
             }
-            if ui.button("Pin part of the screen").on_hover_text("Keeps a piece of the screen floating above other windows (Ctrl+Alt+N)").clicked() {
+            if ui
+                .button("Pin part of the screen")
+                .on_hover_text(
+                    "Keeps a piece of the screen floating above other windows (Ctrl+Alt+N)",
+                )
+                .clicked()
+            {
                 util::spawn_worker("pinregion", None);
             }
         });
@@ -255,7 +308,12 @@ impl Launcher {
         ui::section(ui, "What do you want to record?");
         ui::screen_map(ui, &self.monitors, &mut self.settings.rec_target);
         ui.add_space(8.0);
-        ui::target_pills(ui, &mut self.settings.rec_target, self.monitors.len().max(1), self.settings.all_screens);
+        ui::target_pills(
+            ui,
+            &mut self.settings.rec_target,
+            self.monitors.len().max(1),
+            self.settings.all_screens,
+        );
         let t = self.settings.rec_target.clone();
         let what = target_text(&t, self.monitors.len(), self.settings.all_screens);
         ui.label(RichText::new(what.as_str()).size(12.5).color(TEXT_DIM));
@@ -274,7 +332,11 @@ impl Launcher {
         let mut recheck = false;
         match &self.mic_state {
             Some(Ok(())) => {
-                ui.label(RichText::new("Windows allows SnipForge to use the microphone.").size(12.5).color(SUCCESS));
+                ui.label(
+                    RichText::new("Windows allows SnipForge to use the microphone.")
+                        .size(12.5)
+                        .color(SUCCESS),
+                );
             }
             Some(Err(reason)) => {
                 ui.label(RichText::new(reason.as_str()).color(DANGER));
@@ -301,7 +363,10 @@ impl Launcher {
             "Heard only silence. Say something while testing, or choose the right microphone in Windows sound settings.",
         );
         ui.add_space(8.0);
-        ui.checkbox(&mut self.settings.system_audio, "Record device audio (what you hear through speakers or headphones)");
+        ui.checkbox(
+            &mut self.settings.system_audio,
+            "Record device audio (what you hear through speakers or headphones)",
+        );
         test_row(
             ui,
             ctx,
@@ -317,11 +382,13 @@ impl Launcher {
         ui::section(ui, "Quality and timing");
         ui.horizontal(|ui| {
             ui.label("Frames per second");
-            egui::ComboBox::from_id_source("fps").selected_text(self.settings.fps.to_string()).show_ui(ui, |ui| {
-                for f in [10u32, 15, 24, 30, 60] {
-                    ui.selectable_value(&mut self.settings.fps, f, f.to_string());
-                }
-            });
+            egui::ComboBox::from_id_source("fps")
+                .selected_text(self.settings.fps.to_string())
+                .show_ui(ui, |ui| {
+                    for f in [10u32, 15, 24, 30, 60] {
+                        ui.selectable_value(&mut self.settings.fps, f, f.to_string());
+                    }
+                });
         });
         ui.horizontal(|ui| {
             ui.label("Countdown before recording or scrolling");
@@ -334,25 +401,58 @@ impl Launcher {
     // ------------------------------------------------------------ Tools tab
     fn tab_tools(&mut self, ui: &mut egui::Ui) {
         ui::section(ui, "Your captures");
-        if ui::tool_row(ui, "History", "Browse and search every screenshot, recording and extracted text. Ctrl+Alt+H", "Open history") {
+        if ui::tool_row(
+            ui,
+            "History",
+            "Browse and search every screenshot, recording and extracted text. Ctrl+Alt+H",
+            "Open history",
+        ) {
             util::spawn_worker("history", None);
         }
-        if ui::tool_row(ui, "Screenshots folder", &short_path(&self.settings.shots_path().to_string_lossy(), 64), "Open") {
+        if ui::tool_row(
+            ui,
+            "Screenshots folder",
+            &short_path(&self.settings.shots_path().to_string_lossy(), 64),
+            "Open",
+        ) {
             util::open_in_explorer(&self.settings.shots_path());
         }
-        if ui::tool_row(ui, "Recordings folder", &short_path(&self.settings.videos_path().to_string_lossy(), 64), "Open") {
+        if ui::tool_row(
+            ui,
+            "Recordings folder",
+            &short_path(&self.settings.videos_path().to_string_lossy(), 64),
+            "Open",
+        ) {
             util::open_in_explorer(&self.settings.videos_path());
         }
         ui::section(ui, "Edit and keep");
-        if ui::tool_row(ui, "Edit a video", "Cut parts out, change the speed, add captions, export.", "Choose video...") {
+        if ui::tool_row(
+            ui,
+            "Edit a video",
+            "Cut parts out, change the speed, add captions, export.",
+            "Choose video...",
+        ) {
             util::spawn_worker("video", None);
         }
-        if ui::tool_row(ui, "Edit a picture", "Open any picture in the annotation editor.", "Choose picture...") {
-            if let Some(p) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp"]).pick_file() {
+        if ui::tool_row(
+            ui,
+            "Edit a picture",
+            "Open any picture in the annotation editor.",
+            "Choose picture...",
+        ) {
+            if let Some(p) = rfd::FileDialog::new()
+                .add_filter("Images", &["png", "jpg", "jpeg", "bmp"])
+                .pick_file()
+            {
                 util::spawn_worker_path("open", &p);
             }
         }
-        if ui::tool_row(ui, "Pin the clipboard picture", "Keeps a picture you copied floating above other windows.", "Pin it") {
+        if ui::tool_row(
+            ui,
+            "Pin the clipboard picture",
+            "Keeps a picture you copied floating above other windows.",
+            "Pin it",
+        ) {
             match util::clipboard_image() {
                 Some(img) => {
                     let path = util::temp_png("snipforge_pin");
@@ -370,26 +470,61 @@ impl Launcher {
         let mut engine_changed = false;
         ui::section(ui, "Screens");
         ui.label("When you have several monitors, \"Full screen\" means:");
-        ui.radio_value(&mut self.settings.all_screens, true, "All screens together (one picture, one selection overlay)");
-        ui.radio_value(&mut self.settings.all_screens, false, "Only the main screen");
+        ui.radio_value(
+            &mut self.settings.all_screens,
+            true,
+            "All screens together (one picture, one selection overlay)",
+        );
+        ui.radio_value(
+            &mut self.settings.all_screens,
+            false,
+            "Only the main screen",
+        );
 
         ui::section(ui, "Pictures and text");
-        ui.checkbox(&mut self.settings.auto_copy, "Copy every screenshot to the clipboard");
-        ui.checkbox(&mut self.settings.save_ocr_text, "Save copied text as a .txt file too");
+        ui.checkbox(
+            &mut self.settings.auto_copy,
+            "Copy every screenshot to the clipboard",
+        );
+        ui.checkbox(
+            &mut self.settings.save_ocr_text,
+            "Save copied text as a .txt file too",
+        );
 
         ui::section(ui, "Where files are saved");
-        folder_row(ui, "Screenshots", &mut self.settings.shots_dir, &config::default_shots_dir());
-        folder_row(ui, "Recordings", &mut self.settings.videos_dir, &config::default_videos_dir());
-        folder_row(ui, "Copied text", &mut self.settings.text_dir, &config::default_text_dir());
+        folder_row(
+            ui,
+            "Screenshots",
+            &mut self.settings.shots_dir,
+            &config::default_shots_dir(),
+        );
+        folder_row(
+            ui,
+            "Recordings",
+            &mut self.settings.videos_dir,
+            &config::default_videos_dir(),
+        );
+        folder_row(
+            ui,
+            "Copied text",
+            &mut self.settings.text_dir,
+            &config::default_text_dir(),
+        );
 
         ui::section(ui, "Recording engine");
         if self.ffmpeg_ok {
-            ui.label(RichText::new("Installed. Recording and the video editor are ready.").color(SUCCESS));
+            ui.label(
+                RichText::new("Installed. Recording and the video editor are ready.")
+                    .color(SUCCESS),
+            );
         } else if self.installing {
             ui.label("Setting up the recording engine (one-time download)...");
             ui.add(egui::ProgressBar::new(self.progress.fraction()).text(self.progress.text()));
         } else {
-            ui.label(RichText::new("Not installed yet. Recording and the video editor need it.").color(DANGER));
+            ui.label(
+                RichText::new("Not installed yet. Recording and the video editor need it.")
+                    .color(DANGER),
+            );
             if let Some(e) = &self.setup_error {
                 ui.label(RichText::new(e.as_str()).size(12.0).color(DANGER));
             }
@@ -398,7 +533,10 @@ impl Launcher {
                     self.start_install(ctx);
                 }
                 if ui.button("I have ffmpeg.exe...").clicked() {
-                    if let Some(p) = rfd::FileDialog::new().add_filter("ffmpeg", &["exe"]).pick_file() {
+                    if let Some(p) = rfd::FileDialog::new()
+                        .add_filter("ffmpeg", &["exe"])
+                        .pick_file()
+                    {
                         match setup::import_ffmpeg(&p) {
                             Ok(_) => {
                                 self.ffmpeg_ok = true;
@@ -413,31 +551,43 @@ impl Launcher {
                 }
             });
         }
-        if folder_row(ui, "Where the recording engine is kept", &mut self.settings.engine_dir, &config::default_engine_dir()) {
+        if folder_row(
+            ui,
+            "Where the recording engine is kept",
+            &mut self.settings.engine_dir,
+            &config::default_engine_dir(),
+        ) {
             engine_changed = true;
         }
 
         ui::section(ui, "Keyboard shortcuts");
-        egui::Grid::new("keys").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
-            for (k, d) in [
-                ("Ctrl+Alt+A", "Screenshot of an area"),
-                ("Ctrl+Alt+F", "Screenshot of everything"),
-                ("Ctrl+Alt+S", "Scrolling screenshot (press again to stop)"),
-                ("Ctrl+Alt+T", "Copy text from the screen"),
-                ("Ctrl+Alt+N", "Pin part of the screen"),
-                ("Ctrl+Alt+H", "History"),
-                ("Ctrl+Alt+R", "Record an area (press again to stop)"),
-                ("Ctrl+Alt+V", "Record the whole screen"),
-                ("Ctrl+Alt+P", "Pause or resume the recording"),
-                ("Ctrl+Alt+K", "Screenshot while recording"),
-            ] {
-                ui.label(RichText::new(k).monospace().color(ACCENT));
-                ui.label(d);
-                ui.end_row();
-            }
-        });
+        egui::Grid::new("keys")
+            .num_columns(2)
+            .spacing([18.0, 6.0])
+            .show(ui, |ui| {
+                for (k, d) in [
+                    ("Ctrl+Alt+A", "Screenshot of an area"),
+                    ("Ctrl+Alt+F", "Screenshot of everything"),
+                    ("Ctrl+Alt+S", "Scrolling screenshot (press again to stop)"),
+                    ("Ctrl+Alt+T", "Copy text from the screen"),
+                    ("Ctrl+Alt+N", "Pin part of the screen"),
+                    ("Ctrl+Alt+H", "History"),
+                    ("Ctrl+Alt+R", "Record an area (press again to stop)"),
+                    ("Ctrl+Alt+V", "Record the whole screen"),
+                    ("Ctrl+Alt+P", "Pause or resume the recording"),
+                    ("Ctrl+Alt+K", "Screenshot while recording"),
+                ] {
+                    ui.label(RichText::new(k).monospace().color(ACCENT));
+                    ui.label(d);
+                    ui.end_row();
+                }
+            });
         ui.add_space(14.0);
-        ui.label(RichText::new("Closing this window only minimises it, so the shortcuts keep working.").size(12.0).color(TEXT_DIM));
+        ui.label(
+            RichText::new("Closing this window only minimises it, so the shortcuts keep working.")
+                .size(12.0)
+                .color(TEXT_DIM),
+        );
         if ui.button("Quit SnipForge").clicked() {
             self.quitting = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -484,9 +634,18 @@ impl eframe::App for Launcher {
         }
 
         egui::TopBottomPanel::top("head")
-            .frame(egui::Frame::none().fill(PANEL).inner_margin(egui::Margin { left: 24.0, right: 24.0, top: 16.0, bottom: 0.0 }))
+            .frame(egui::Frame::none().fill(PANEL).inner_margin(egui::Margin {
+                left: 24.0,
+                right: 24.0,
+                top: 16.0,
+                bottom: 0.0,
+            }))
             .show(ctx, |ui| {
-                ui.label(RichText::new("SnipForge").font(ui::semibold(26.0)).color(ACCENT));
+                ui.label(
+                    RichText::new("SnipForge")
+                        .font(ui::semibold(26.0))
+                        .color(ACCENT),
+                );
                 ui.add_space(6.0);
                 let mut idx = TABS.iter().position(|(t, _)| *t == self.tab).unwrap_or(0);
                 let labels: Vec<&str> = TABS.iter().map(|(_, l)| *l).collect();
@@ -494,24 +653,41 @@ impl eframe::App for Launcher {
                 self.tab = TABS[idx].0;
             });
         egui::TopBottomPanel::bottom("foot")
-            .frame(egui::Frame::none().fill(PANEL).stroke(egui::Stroke::new(1.0, BORDER)).inner_margin(egui::Margin::symmetric(24.0, 7.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(PANEL)
+                    .stroke(egui::Stroke::new(1.0, BORDER))
+                    .inner_margin(egui::Margin::symmetric(24.0, 7.0)),
+            )
             .show(ctx, |ui| {
-                ui.label(RichText::new(self.status.as_str()).size(12.0).color(TEXT_DIM));
+                ui.label(
+                    RichText::new(self.status.as_str())
+                        .size(12.0)
+                        .color(TEXT_DIM),
+                );
             });
 
         let mut engine_changed = false;
-        egui::CentralPanel::default().frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(24.0, 6.0))).show(ctx, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.set_max_width(ui.available_width());
-                match self.tab {
-                    Tab::Capture => self.tab_capture(ui),
-                    Tab::Record => self.tab_record(ui, ctx),
-                    Tab::Tools => self.tab_tools(ui),
-                    Tab::Settings => engine_changed = self.tab_settings(ui, ctx),
-                }
-                ui.add_space(20.0);
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::none()
+                    .fill(BG)
+                    .inner_margin(egui::Margin::symmetric(24.0, 6.0)),
+            )
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_max_width(ui.available_width());
+                        match self.tab {
+                            Tab::Capture => self.tab_capture(ui),
+                            Tab::Record => self.tab_record(ui, ctx),
+                            Tab::Tools => self.tab_tools(ui),
+                            Tab::Settings => engine_changed = self.tab_settings(ui, ctx),
+                        }
+                        ui.add_space(20.0);
+                    });
             });
-        });
 
         if self.settings != self.saved {
             self.settings.save();

@@ -48,7 +48,13 @@ pub struct Recorder {
 
 impl Recorder {
     /// region = (x, y, width, height) in screen pixels. x/y may be negative (monitors left of / above the primary).
-    pub fn start(ctx: egui::Context, region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, ffmpeg: PathBuf) -> Recorder {
+    pub fn start(
+        ctx: egui::Context,
+        region: (i32, i32, u32, u32),
+        opts: RecOptions,
+        out: PathBuf,
+        ffmpeg: PathBuf,
+    ) -> Recorder {
         let shared = Arc::new(Shared::default());
         shared.mic_on.store(opts.mic, Ordering::SeqCst);
         shared.sys_on.store(opts.system, Ordering::SeqCst);
@@ -58,7 +64,10 @@ impl Recorder {
             ctx.request_repaint();
             r
         });
-        Recorder { shared, handle: Some(handle) }
+        Recorder {
+            shared,
+            handle: Some(handle),
+        }
     }
 
     pub fn request_stop(&self) {
@@ -91,10 +100,18 @@ impl Recorder {
     }
     /// Why the microphone / device audio could not start (empty if it did).
     pub fn mic_error(&self) -> String {
-        self.shared.mic_err.lock().map(|e| e.clone()).unwrap_or_default()
+        self.shared
+            .mic_err
+            .lock()
+            .map(|e| e.clone())
+            .unwrap_or_default()
     }
     pub fn sys_error(&self) -> String {
-        self.shared.sys_err.lock().map(|e| e.clone()).unwrap_or_default()
+        self.shared
+            .sys_err
+            .lock()
+            .map(|e| e.clone())
+            .unwrap_or_default()
     }
     pub fn mic_on(&self) -> bool {
         self.shared.mic_on.load(Ordering::Relaxed)
@@ -112,17 +129,28 @@ impl Recorder {
     }
     /// Warnings collected while recording (e.g. "no microphone found").
     pub fn note(&self) -> String {
-        self.shared.note.lock().map(|n| n.clone()).unwrap_or_default()
+        self.shared
+            .note
+            .lock()
+            .map(|n| n.clone())
+            .unwrap_or_default()
     }
 
     /// Returns Some(result) once the recording has been finalised.
     pub fn poll(&mut self) -> Option<Result<PathBuf, String>> {
-        let finished = self.handle.as_ref().map(|h| h.is_finished()).unwrap_or(false);
+        let finished = self
+            .handle
+            .as_ref()
+            .map(|h| h.is_finished())
+            .unwrap_or(false);
         if !finished {
             return None;
         }
         let h = self.handle.take()?;
-        Some(h.join().unwrap_or_else(|_| Err("recorder crashed".to_string())))
+        Some(
+            h.join()
+                .unwrap_or_else(|_| Err("recorder crashed".to_string())),
+        )
     }
 }
 
@@ -136,11 +164,24 @@ struct Track {
 
 impl Track {
     fn open(loopback: bool, shared: &Shared, path: PathBuf) -> Result<Track, String> {
-        let enabled = if loopback { shared.sys_on.clone() } else { shared.mic_on.clone() };
-        let level = if loopback { shared.sys_level.clone() } else { shared.mic_level.clone() };
+        let enabled = if loopback {
+            shared.sys_on.clone()
+        } else {
+            shared.mic_on.clone()
+        };
+        let level = if loopback {
+            shared.sys_level.clone()
+        } else {
+            shared.mic_level.clone()
+        };
         let cap = audio::start_capture(loopback, shared.paused.clone(), enabled, level)?;
         let file = BufWriter::new(File::create(&path).map_err(|e| e.to_string())?);
-        Ok(Track { cap, file, path, written: 0 })
+        Ok(Track {
+            cap,
+            file,
+            path,
+            written: 0,
+        })
     }
 
     /// Move captured samples to disk, and pad with silence so the track keeps real-time length
@@ -213,7 +254,13 @@ fn add_note(shared: &Shared, text: &str) {
 }
 
 // ------------------------------------------------------------------ main recording thread
-fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc<Shared>, ff: PathBuf) -> Result<PathBuf, String> {
+fn run(
+    region: (i32, i32, u32, u32),
+    opts: RecOptions,
+    out: PathBuf,
+    shared: Arc<Shared>,
+    ff: PathBuf,
+) -> Result<PathBuf, String> {
     let fps = opts.fps.max(1);
     let (ax, ay, rw, rh) = region;
     let (rw, rh) = (rw & !1, rh & !1); // encoders want even sizes
@@ -250,24 +297,46 @@ fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc
     // video encoder: reads raw frames from stdin and ends when stdin is closed
     let video_tmp = out.with_extension("video.tmp.mp4");
     let mut cmd = Command::new(&ff);
-    cmd.args(["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgra"]);
+    cmd.args([
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "bgra",
+    ]);
     cmd.arg("-video_size").arg(format!("{}x{}", rw, rh));
     cmd.arg("-framerate").arg(fps.to_string());
     cmd.args(["-i", "-", "-an"]);
     if rw > 3840 || rh > 2160 {
         // several monitors at once: keep the file/encoder manageable (max 3840 x 2160, aspect ratio kept)
         cmd.args(["-vf", "scale=w=3840:h=2160:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"]);
-        add_note(&shared, "The recorded area is very large, so the video was scaled down to fit 3840 px.");
+        add_note(
+            &shared,
+            "The recorded area is very large, so the video was scaled down to fit 3840 px.",
+        );
     }
-    let preset = if (rw as u64) * (rh as u64) > 2_600_000 { "ultrafast" } else { "veryfast" };
-    cmd.args(["-c:v", "libx264", "-preset", preset, "-crf", "23", "-pix_fmt", "yuv420p"]);
+    let preset = if (rw as u64) * (rh as u64) > 2_600_000 {
+        "ultrafast"
+    } else {
+        "veryfast"
+    };
+    cmd.args([
+        "-c:v", "libx264", "-preset", preset, "-crf", "23", "-pix_fmt", "yuv420p",
+    ]);
     cmd.arg(&video_tmp);
-    cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
     no_window(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| {
         format!("Could not start ffmpeg ({e}). Open SnipForge and use 'Install now' in the Components box.")
     })?;
-    let mut stdin = child.stdin.take().ok_or_else(|| "no ffmpeg stdin".to_string())?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "no ffmpeg stdin".to_string())?;
 
     let frame_bytes = rw_u * rh_u * 4;
     let mut last = vec![0u8; frame_bytes];
@@ -280,7 +349,10 @@ fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc
 
     'outer: while !shared.stop.load(Ordering::SeqCst) {
         // ---- start an audio source the first time it is switched on (earlier time is filled with silence)
-        if mic.is_none() && !shared.mic_failed.load(Ordering::Relaxed) && shared.mic_on.load(Ordering::Relaxed) {
+        if mic.is_none()
+            && !shared.mic_failed.load(Ordering::Relaxed)
+            && shared.mic_on.load(Ordering::Relaxed)
+        {
             match Track::open(false, &shared, mic_path.clone()) {
                 Ok(t) => mic = Some(t),
                 Err(e) => {
@@ -292,7 +364,10 @@ fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc
                 }
             }
         }
-        if sys.is_none() && !shared.sys_failed.load(Ordering::Relaxed) && shared.sys_on.load(Ordering::Relaxed) {
+        if sys.is_none()
+            && !shared.sys_failed.load(Ordering::Relaxed)
+            && shared.sys_on.load(Ordering::Relaxed)
+        {
             match Track::open(true, &shared, sys_path.clone()) {
                 Ok(t) => sys = Some(t),
                 Err(e) => {
@@ -346,7 +421,9 @@ fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc
 
         // ---- keep real-time speed: write as many frames as are "due" (paused time excluded)
         active = start.elapsed().saturating_sub(paused_total);
-        shared.active_ms.store(active.as_millis() as u64, Ordering::Relaxed);
+        shared
+            .active_ms
+            .store(active.as_millis() as u64, Ordering::Relaxed);
         let due = (active.as_secs_f64() * fps as f64) as u64 + 1;
         let n = due.saturating_sub(written).max(1).min(fps as u64);
         for _ in 0..n {
@@ -393,7 +470,8 @@ fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc
 
     // ---- no audio: the video file is the result
     if mic_info.is_none() && sys_info.is_none() {
-        std::fs::rename(&video_tmp, &out).map_err(|e| format!("could not save the recording: {e}"))?;
+        std::fs::rename(&video_tmp, &out)
+            .map_err(|e| format!("could not save the recording: {e}"))?;
         return Ok(out);
     }
 
@@ -441,7 +519,8 @@ fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc
         }
         Err(e) => {
             // keep the picture even if adding sound failed
-            std::fs::rename(&video_tmp, &out).map_err(|e2| format!("could not save the recording: {e2}"))?;
+            std::fs::rename(&video_tmp, &out)
+                .map_err(|e2| format!("could not save the recording: {e2}"))?;
             add_note(&shared, &format!("Saved without sound ({e})"));
             Ok(out)
         }

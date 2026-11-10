@@ -33,10 +33,14 @@ fn denied(v: Option<String>) -> bool {
 pub fn mic_access() -> MicAccess {
     let base = r"HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
     if denied(reg_value(base)) {
-        return MicAccess::Blocked("Microphone access is switched off for this whole PC.".to_string());
+        return MicAccess::Blocked(
+            "Microphone access is switched off for this whole PC.".to_string(),
+        );
     }
     if denied(reg_value(&format!("{base}\\NonPackaged"))) {
-        return MicAccess::Blocked("Windows is not letting desktop apps use the microphone.".to_string());
+        return MicAccess::Blocked(
+            "Windows is not letting desktop apps use the microphone.".to_string(),
+        );
     }
     MicAccess::Allowed
 }

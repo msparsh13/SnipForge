@@ -45,7 +45,10 @@ pub fn probe(ff: &Path, video: &Path) -> Result<VideoInfo, String> {
         .and_then(parse_hms)
         .ok_or_else(|| "Could not read the length of this video.".to_string())?;
 
-    let vline = text.lines().find(|l| l.contains("Video:")).ok_or_else(|| "This file has no video.".to_string())?;
+    let vline = text
+        .lines()
+        .find(|l| l.contains("Video:"))
+        .ok_or_else(|| "This file has no video.".to_string())?;
     let (mut width, mut height) = (0u32, 0u32);
     for seg in vline.split(',') {
         if let Some(tok) = seg.split_whitespace().next() {
@@ -63,14 +66,23 @@ pub fn probe(ff: &Path, video: &Path) -> Result<VideoInfo, String> {
     if width == 0 {
         return Err("Could not read the picture size of this video.".to_string());
     }
-    Ok(VideoInfo { duration, width, height, has_audio: text.contains("Audio:") })
+    Ok(VideoInfo {
+        duration,
+        width,
+        height,
+        has_audio: text.contains("Audio:"),
+    })
 }
 
 /// One still frame (for scrubbing).
 pub fn grab_frame(ff: &Path, video: &Path, t: f64, w: u32, h: u32) -> Option<egui::ColorImage> {
     let mut cmd = Command::new(ff);
-    cmd.args(["-loglevel", "error", "-ss"]).arg(format!("{t:.3}")).arg("-i").arg(video);
-    cmd.args(["-frames:v", "1", "-vf"]).arg(format!("scale={w}:{h}"));
+    cmd.args(["-loglevel", "error", "-ss"])
+        .arg(format!("{t:.3}"))
+        .arg("-i")
+        .arg(video);
+    cmd.args(["-frames:v", "1", "-vf"])
+        .arg(format!("scale={w}:{h}"));
     cmd.args(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"]);
     cmd.stdout(Stdio::piped()).stderr(Stdio::null());
     no_window(&mut cmd);
@@ -78,7 +90,10 @@ pub fn grab_frame(ff: &Path, video: &Path, t: f64, w: u32, h: u32) -> Option<egu
     if out.stdout.len() != (w * h * 4) as usize {
         return None;
     }
-    Some(egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &out.stdout))
+    Some(egui::ColorImage::from_rgba_unmultiplied(
+        [w as usize, h as usize],
+        &out.stdout,
+    ))
 }
 
 // ------------------------------------------------------------------ silent preview playback
@@ -90,20 +105,34 @@ pub struct PlayJob {
 }
 
 impl PlayJob {
-    pub fn start(ctx: egui::Context, ff: PathBuf, video: PathBuf, start_t: f64, w: u32, h: u32, speed: f64) -> PlayJob {
+    pub fn start(
+        ctx: egui::Context,
+        ff: PathBuf,
+        video: PathBuf,
+        start_t: f64,
+        w: u32,
+        h: u32,
+        speed: f64,
+    ) -> PlayJob {
         let stop = Arc::new(AtomicBool::new(false));
         let frames = Arc::new(AtomicU64::new(0));
         let (tx, rx) = mpsc::channel();
         let (s2, f2) = (stop.clone(), frames.clone());
         thread::spawn(move || {
             let mut cmd = Command::new(&ff);
-            cmd.args(["-loglevel", "error", "-ss"]).arg(format!("{start_t:.3}")).arg("-i").arg(&video);
-            cmd.arg("-vf").arg(format!("fps={PREVIEW_FPS},scale={w}:{h}"));
+            cmd.args(["-loglevel", "error", "-ss"])
+                .arg(format!("{start_t:.3}"))
+                .arg("-i")
+                .arg(&video);
+            cmd.arg("-vf")
+                .arg(format!("fps={PREVIEW_FPS},scale={w}:{h}"));
             cmd.args(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"]);
             cmd.stdout(Stdio::piped()).stderr(Stdio::null());
             no_window(&mut cmd);
             let Ok(mut child) = cmd.spawn() else { return };
-            let Some(mut out) = child.stdout.take() else { return };
+            let Some(mut out) = child.stdout.take() else {
+                return;
+            };
             let mut buf = vec![0u8; (w * h * 4) as usize];
             let began = Instant::now();
             loop {
@@ -111,17 +140,26 @@ impl PlayJob {
                     break;
                 }
                 let idx = f2.fetch_add(1, Ordering::SeqCst) + 1;
-                let due = began + Duration::from_secs_f64(idx as f64 / (PREVIEW_FPS as f64 * speed));
+                let due =
+                    began + Duration::from_secs_f64(idx as f64 / (PREVIEW_FPS as f64 * speed));
                 if let Some(wait) = due.checked_duration_since(Instant::now()) {
                     thread::sleep(wait);
                 }
-                let _ = tx.send(egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &buf));
+                let _ = tx.send(egui::ColorImage::from_rgba_unmultiplied(
+                    [w as usize, h as usize],
+                    &buf,
+                ));
                 ctx.request_repaint();
             }
             let _ = child.kill();
             let _ = child.wait();
         });
-        PlayJob { stop, frames, rx, start_t }
+        PlayJob {
+            stop,
+            frames,
+            rx,
+            start_t,
+        }
     }
 
     pub fn stop(&self) {
@@ -207,10 +245,14 @@ fn build_graph(p: &ExportParams, burn: bool) -> (String, Option<String>, Option<
     let mut parts: Vec<String> = Vec::new();
     for (i, (s, e)) in p.keeps.iter().enumerate() {
         if video {
-            parts.push(format!("[0:v]trim=start={s:.3}:end={e:.3},setpts=PTS-STARTPTS[v{i}]"));
+            parts.push(format!(
+                "[0:v]trim=start={s:.3}:end={e:.3},setpts=PTS-STARTPTS[v{i}]"
+            ));
         }
         if audio {
-            parts.push(format!("[0:a]atrim=start={s:.3}:end={e:.3},asetpts=PTS-STARTPTS[a{i}]"));
+            parts.push(format!(
+                "[0:a]atrim=start={s:.3}:end={e:.3},asetpts=PTS-STARTPTS[a{i}]"
+            ));
         }
     }
     let mut cat = String::new();
@@ -229,7 +271,11 @@ fn build_graph(p: &ExportParams, burn: bool) -> (String, Option<String>, Option<
     if audio {
         outs.push_str("[ac]");
     }
-    parts.push(format!("{cat}concat=n={n}:v={}:a={}{outs}", if video { 1 } else { 0 }, if audio { 1 } else { 0 }));
+    parts.push(format!(
+        "{cat}concat=n={n}:v={}:a={}{outs}",
+        if video { 1 } else { 0 },
+        if audio { 1 } else { 0 }
+    ));
 
     let mut vlabel = None;
     let mut alabel = None;
@@ -288,7 +334,11 @@ impl ExportJob {
             ctx.request_repaint();
             r
         });
-        ExportJob { progress, cancel, handle: Some(handle) }
+        ExportJob {
+            progress,
+            cancel,
+            handle: Some(handle),
+        }
     }
 
     pub fn cancel(&self) {
@@ -296,16 +346,28 @@ impl ExportJob {
     }
 
     pub fn poll(&mut self) -> Option<Result<PathBuf, String>> {
-        let done = self.handle.as_ref().map(|h| h.is_finished()).unwrap_or(false);
+        let done = self
+            .handle
+            .as_ref()
+            .map(|h| h.is_finished())
+            .unwrap_or(false);
         if !done {
             return None;
         }
         let h = self.handle.take()?;
-        Some(h.join().unwrap_or_else(|_| Err("export crashed".to_string())))
+        Some(
+            h.join()
+                .unwrap_or_else(|_| Err("export crashed".to_string())),
+        )
     }
 }
 
-fn run_export(ctx: &egui::Context, p: ExportParams, progress: &AtomicU32, cancel: &AtomicBool) -> Result<PathBuf, String> {
+fn run_export(
+    ctx: &egui::Context,
+    p: ExportParams,
+    progress: &AtomicU32,
+    cancel: &AtomicBool,
+) -> Result<PathBuf, String> {
     if p.keeps.is_empty() {
         return Err("Nothing left to export (everything was cut).".to_string());
     }
@@ -315,7 +377,11 @@ fn run_export(ctx: &egui::Context, p: ExportParams, progress: &AtomicU32, cancel
     let total_secs = (p.keeps.iter().map(|(s, e)| e - s).sum::<f64>() / p.speed).max(0.1);
     let burn = p.burn && p.fmt != Fmt::Mp3 && !p.captions.is_empty();
 
-    let tmp = std::env::temp_dir().join(format!("snipforge_export_{}_{}", crate::util::timestamp(), std::process::id()));
+    let tmp = std::env::temp_dir().join(format!(
+        "snipforge_export_{}_{}",
+        crate::util::timestamp(),
+        std::process::id()
+    ));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     if burn {
         write_srt(&p.captions, &tmp.join("cap.srt")).map_err(|e| e.to_string())?;
@@ -323,7 +389,16 @@ fn run_export(ctx: &egui::Context, p: ExportParams, progress: &AtomicU32, cancel
 
     let (graph, vlabel, alabel) = build_graph(&p, burn);
     let mut cmd = Command::new(&p.ff);
-    cmd.args(["-y", "-loglevel", "error", "-progress", "pipe:1", "-nostats", "-i"]).arg(&p.src);
+    cmd.args([
+        "-y",
+        "-loglevel",
+        "error",
+        "-progress",
+        "pipe:1",
+        "-nostats",
+        "-i",
+    ])
+    .arg(&p.src);
     cmd.arg("-filter_complex").arg(&graph);
     if let Some(v) = &vlabel {
         cmd.arg("-map").arg(v);
@@ -334,12 +409,34 @@ fn run_export(ctx: &egui::Context, p: ExportParams, progress: &AtomicU32, cancel
     let crf = p.quality.crf();
     match p.fmt {
         Fmt::Mp4 => {
-            cmd.args(["-c:v", "libx264", "-preset", "veryfast", "-crf"]).arg(crf.to_string());
-            cmd.args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"]);
+            cmd.args(["-c:v", "libx264", "-preset", "veryfast", "-crf"])
+                .arg(crf.to_string());
+            cmd.args([
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "160k",
+                "-movflags",
+                "+faststart",
+            ]);
         }
         Fmt::WebM => {
-            cmd.args(["-c:v", "libvpx-vp9", "-crf"]).arg((crf + 8).to_string());
-            cmd.args(["-b:v", "0", "-deadline", "realtime", "-cpu-used", "6", "-row-mt", "1", "-pix_fmt", "yuv420p"]);
+            cmd.args(["-c:v", "libvpx-vp9", "-crf"])
+                .arg((crf + 8).to_string());
+            cmd.args([
+                "-b:v",
+                "0",
+                "-deadline",
+                "realtime",
+                "-cpu-used",
+                "6",
+                "-row-mt",
+                "1",
+                "-pix_fmt",
+                "yuv420p",
+            ]);
             cmd.args(["-c:a", "libopus", "-b:a", "128k"]);
         }
         Fmt::Gif => {
@@ -354,8 +451,13 @@ fn run_export(ctx: &egui::Context, p: ExportParams, progress: &AtomicU32, cancel
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     no_window(&mut cmd);
 
-    let mut child = cmd.spawn().map_err(|e| format!("Could not start ffmpeg: {e}"))?;
-    let stdout = child.stdout.take().ok_or_else(|| "no ffmpeg output".to_string())?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Could not start ffmpeg: {e}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "no ffmpeg output".to_string())?;
     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
         if cancel.load(Ordering::SeqCst) {
             let _ = child.kill();

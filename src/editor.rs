@@ -59,7 +59,11 @@ type CropRect = (u32, u32, u32, u32);
 
 enum Edit {
     Add(Ann),
-    Crop { before_base: RgbaImage, before_anns: Vec<Ann>, rect: CropRect },
+    Crop {
+        before_base: RgbaImage,
+        before_anns: Vec<Ann>,
+        rect: CropRect,
+    },
 }
 
 enum Redo {
@@ -102,7 +106,11 @@ fn ellipse_points(c: Pos2, rx: f32, ry: f32) -> Vec<Pos2> {
 fn draw_tool_icon(p: &egui::Painter, r: Rect, tool: Tool, c: Color32) {
     let s = Stroke::new(2.0, c);
     match tool {
-        Tool::Arrow => p.arrow(r.left_bottom() + vec2(2.0, -2.0), vec2(r.width() - 4.0, -(r.height() - 4.0)), s),
+        Tool::Arrow => p.arrow(
+            r.left_bottom() + vec2(2.0, -2.0),
+            vec2(r.width() - 4.0, -(r.height() - 4.0)),
+            s,
+        ),
         Tool::Rect => {
             p.rect_stroke(r.shrink(2.0), 2.0, s);
         }
@@ -114,35 +122,66 @@ fn draw_tool_icon(p: &egui::Painter, r: Rect, tool: Tool, c: Color32) {
             let pts: Vec<Pos2> = (0..=12)
                 .map(|i| {
                     let t = i as f32 / 12.0;
-                    pos2(r.min.x + t * r.width(), r.center().y + (t * 9.0).sin() * 6.0)
+                    pos2(
+                        r.min.x + t * r.width(),
+                        r.center().y + (t * 9.0).sin() * 6.0,
+                    )
                 })
                 .collect();
             p.add(Shape::line(pts, s));
         }
         Tool::Highlight => {
-            p.line_segment([r.left_center(), r.right_center()], Stroke::new(10.0, c.gamma_multiply(0.45)));
+            p.line_segment(
+                [r.left_center(), r.right_center()],
+                Stroke::new(10.0, c.gamma_multiply(0.45)),
+            );
             p.line_segment([r.left_center(), r.right_center()], Stroke::new(1.5, c));
         }
         Tool::Text => {
-            p.text(r.center(), Align2::CENTER_CENTER, "T", FontId::proportional(21.0), c);
+            p.text(
+                r.center(),
+                Align2::CENTER_CENTER,
+                "T",
+                FontId::proportional(21.0),
+                c,
+            );
         }
         Tool::Step => {
             p.circle_filled(r.center(), 10.0, c);
-            p.text(r.center(), Align2::CENTER_CENTER, "1", FontId::proportional(13.0), Color32::WHITE);
+            p.text(
+                r.center(),
+                Align2::CENTER_CENTER,
+                "1",
+                FontId::proportional(13.0),
+                Color32::WHITE,
+            );
         }
         Tool::Blur => {
             let cell = r.height() / 3.0;
             for ix in 0..3 {
                 for iy in 0..3 {
                     if (ix + iy) % 2 == 0 {
-                        let min = pos2(r.center().x - 1.5 * cell + ix as f32 * cell, r.min.y + iy as f32 * cell);
-                        p.rect_filled(Rect::from_min_size(min, vec2(cell, cell)), 0.0, c.gamma_multiply(0.8));
+                        let min = pos2(
+                            r.center().x - 1.5 * cell + ix as f32 * cell,
+                            r.min.y + iy as f32 * cell,
+                        );
+                        p.rect_filled(
+                            Rect::from_min_size(min, vec2(cell, cell)),
+                            0.0,
+                            c.gamma_multiply(0.8),
+                        );
                     }
                 }
             }
         }
         Tool::Read => {
-            p.text(r.center(), Align2::CENTER_CENTER, "Aa", FontId::proportional(15.0), c);
+            p.text(
+                r.center(),
+                Align2::CENTER_CENTER,
+                "Aa",
+                FontId::proportional(15.0),
+                c,
+            );
             p.rect_stroke(r.shrink(1.0), 3.0, Stroke::new(1.5, c.gamma_multiply(0.7)));
         }
         Tool::Crop => {
@@ -172,7 +211,16 @@ fn tool_button(ui: &mut egui::Ui, selected: bool, tool: Tool, label: &str) -> eg
         p.rect_stroke(rect, 8.0, Stroke::new(1.5, ACCENT));
     }
     let icon_rect = Rect::from_center_size(rect.center_top() + vec2(0.0, 19.0), vec2(26.0, 22.0));
-    draw_tool_icon(&p, icon_rect, tool, if selected { ACCENT } else { Color32::from_rgb(58, 64, 78) });
+    draw_tool_icon(
+        &p,
+        icon_rect,
+        tool,
+        if selected {
+            ACCENT
+        } else {
+            Color32::from_rgb(58, 64, 78)
+        },
+    );
     p.text(
         rect.center_bottom() - vec2(0.0, 9.0),
         Align2::CENTER_CENTER,
@@ -238,7 +286,11 @@ impl Editor {
         for a in self.anns.iter_mut() {
             a.translate(-(x as f32), -(y as f32));
         }
-        self.undo_stack.push(Edit::Crop { before_base, before_anns, rect: r });
+        self.undo_stack.push(Edit::Crop {
+            before_base,
+            before_anns,
+            rect: r,
+        });
         self.dirty = true;
     }
 
@@ -273,7 +325,11 @@ impl Editor {
                 self.redo_stack.push(Redo::Add(a));
                 self.dirty = true;
             }
-            Some(Edit::Crop { before_base, before_anns, rect }) => {
+            Some(Edit::Crop {
+                before_base,
+                before_anns,
+                rect,
+            }) => {
                 self.base = before_base;
                 self.anns = before_anns;
                 self.redo_stack.push(Redo::Crop(rect));
@@ -300,12 +356,38 @@ impl Editor {
         let col = self.color32();
         let moved = (d.cur - d.start).length();
         match self.tool {
-            Tool::Arrow if moved > 3.0 => Some(Ann::Arrow { a: d.start, b: d.cur, color: col, w: self.width }),
-            Tool::Rect if moved > 3.0 => Some(Ann::Rect { a: d.start, b: d.cur, color: col, w: self.width }),
-            Tool::Ellipse if moved > 3.0 => Some(Ann::Ellipse { a: d.start, b: d.cur, color: col, w: self.width }),
-            Tool::Blur if moved > 3.0 => Some(Ann::Blur { a: d.start, b: d.cur }),
-            Tool::Pen if d.pts.len() > 1 => Some(Ann::Pen { pts: d.pts.clone(), color: col, w: self.width }),
-            Tool::Highlight if d.pts.len() > 1 => Some(Ann::Highlight { pts: d.pts.clone(), color: col, w: self.width }),
+            Tool::Arrow if moved > 3.0 => Some(Ann::Arrow {
+                a: d.start,
+                b: d.cur,
+                color: col,
+                w: self.width,
+            }),
+            Tool::Rect if moved > 3.0 => Some(Ann::Rect {
+                a: d.start,
+                b: d.cur,
+                color: col,
+                w: self.width,
+            }),
+            Tool::Ellipse if moved > 3.0 => Some(Ann::Ellipse {
+                a: d.start,
+                b: d.cur,
+                color: col,
+                w: self.width,
+            }),
+            Tool::Blur if moved > 3.0 => Some(Ann::Blur {
+                a: d.start,
+                b: d.cur,
+            }),
+            Tool::Pen if d.pts.len() > 1 => Some(Ann::Pen {
+                pts: d.pts.clone(),
+                color: col,
+                w: self.width,
+            }),
+            Tool::Highlight if d.pts.len() > 1 => Some(Ann::Highlight {
+                pts: d.pts.clone(),
+                color: col,
+                w: self.width,
+            }),
             _ => None,
         }
     }
@@ -316,7 +398,11 @@ impl Editor {
     }
 
     fn save_as(&mut self) -> Result<(), String> {
-        let name = self.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let name = self
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
         if let Some(p) = rfd::FileDialog::new()
             .add_filter("PNG", &["png"])
             .add_filter("JPEG", &["jpg", "jpeg"])
@@ -374,13 +460,23 @@ impl Editor {
 
         // ---- top bar
         egui::TopBottomPanel::top("actions")
-            .frame(egui::Frame::none().fill(PANEL).inner_margin(egui::Margin::symmetric(12.0, 8.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(PANEL)
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(!self.undo_stack.is_empty(), egui::Button::new("Undo")).clicked() {
+                    if ui
+                        .add_enabled(!self.undo_stack.is_empty(), egui::Button::new("Undo"))
+                        .clicked()
+                    {
                         self.undo();
                     }
-                    if ui.add_enabled(!self.redo_stack.is_empty(), egui::Button::new("Redo")).clicked() {
+                    if ui
+                        .add_enabled(!self.redo_stack.is_empty(), egui::Button::new("Redo"))
+                        .clicked()
+                    {
                         self.redo();
                     }
                     ui.separator();
@@ -419,9 +515,16 @@ impl Editor {
 
         // ---- crop confirmation bar
         if let Some(r) = self.pending_crop {
-            let size = self.rect_to_crop(r).map(|c| format!("{} x {} px", c.2, c.3)).unwrap_or_default();
+            let size = self
+                .rect_to_crop(r)
+                .map(|c| format!("{} x {} px", c.2, c.3))
+                .unwrap_or_default();
             egui::TopBottomPanel::top("crop_bar")
-                .frame(egui::Frame::none().fill(ACCENT_SOFT).inner_margin(egui::Margin::symmetric(12.0, 6.0)))
+                .frame(
+                    egui::Frame::none()
+                        .fill(ACCENT_SOFT)
+                        .inner_margin(egui::Margin::symmetric(12.0, 6.0)),
+                )
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(format!("Crop to {size}"));
@@ -439,7 +542,11 @@ impl Editor {
         egui::SidePanel::left("tools")
             .exact_width(84.0)
             .resizable(false)
-            .frame(egui::Frame::none().fill(PANEL).inner_margin(egui::Margin::same(10.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(PANEL)
+                    .inner_margin(egui::Margin::same(10.0)),
+            )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for (t, label) in TOOLS {
@@ -455,11 +562,17 @@ impl Editor {
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
                         for c in SWATCHES {
-                            let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
-                            ui.painter().rect_filled(r, 5.0, Color32::from_rgb(c[0], c[1], c[2]));
+                            let (r, resp) =
+                                ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+                            ui.painter()
+                                .rect_filled(r, 5.0, Color32::from_rgb(c[0], c[1], c[2]));
                             ui.painter().rect_stroke(r, 5.0, Stroke::new(1.0, BORDER));
                             if self.color == c {
-                                ui.painter().rect_stroke(r.expand(2.0), 6.0, Stroke::new(2.0, ACCENT));
+                                ui.painter().rect_stroke(
+                                    r.expand(2.0),
+                                    6.0,
+                                    Stroke::new(2.0, ACCENT),
+                                );
                             }
                             if resp.clicked() {
                                 self.color = c;
@@ -475,16 +588,28 @@ impl Editor {
             });
 
         egui::TopBottomPanel::bottom("status")
-            .frame(egui::Frame::none().fill(PANEL).inner_margin(egui::Margin::symmetric(12.0, 5.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(PANEL)
+                    .inner_margin(egui::Margin::symmetric(12.0, 5.0)),
+            )
             .show(ctx, |ui| {
-                ui.label(egui::RichText::new(status.as_str()).size(12.0).color(TEXT_DIM));
+                ui.label(
+                    egui::RichText::new(status.as_str())
+                        .size(12.0)
+                        .color(TEXT_DIM),
+                );
             });
 
         // ---- canvas
         let col = self.color32();
         let tool = self.tool;
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(CANVAS).inner_margin(egui::Margin::same(12.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(CANVAS)
+                    .inner_margin(egui::Margin::same(12.0)),
+            )
             .show(ctx, |ui| {
                 let avail = ui.available_rect_before_wrap();
                 let (iw, ih) = (self.base.width() as f32, self.base.height() as f32);
@@ -496,7 +621,12 @@ impl Editor {
 
                 painter.rect_filled(rect.expand(1.0), 0.0, Color32::from_rgb(190, 196, 208));
                 if let Some(tex) = &self.tex {
-                    painter.image(tex.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    painter.image(
+                        tex.id(),
+                        rect,
+                        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
                 }
                 if resp.hovered() && self.pending_text.is_none() {
                     ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
@@ -511,9 +641,19 @@ impl Editor {
                             if let Some(p) = resp.interact_pointer_pos() {
                                 let ip = to_img(p);
                                 if tool == Tool::Step {
-                                    let n = self.anns.iter().filter(|a| matches!(a, Ann::Step { .. })).count() as u32 + 1;
+                                    let n = self
+                                        .anns
+                                        .iter()
+                                        .filter(|a| matches!(a, Ann::Step { .. }))
+                                        .count() as u32
+                                        + 1;
                                     let w = self.width;
-                                    self.commit_ann(Ann::Step { p: ip, n, color: col, w });
+                                    self.commit_ann(Ann::Step {
+                                        p: ip,
+                                        n,
+                                        color: col,
+                                        w,
+                                    });
                                 } else {
                                     self.pending_text = Some((ip, String::new()));
                                 }
@@ -524,7 +664,11 @@ impl Editor {
                         if resp.drag_started() {
                             if let Some(p) = resp.interact_pointer_pos() {
                                 let ip = to_img(p);
-                                self.drag = Some(Drag { start: ip, cur: ip, pts: vec![ip] });
+                                self.drag = Some(Drag {
+                                    start: ip,
+                                    cur: ip,
+                                    pts: vec![ip],
+                                });
                             }
                         }
                         if resp.dragged() {
@@ -542,12 +686,17 @@ impl Editor {
                             if let Some(d) = self.drag.take() {
                                 if tool == Tool::Crop {
                                     if (d.cur - d.start).length() > 8.0 {
-                                        self.pending_crop = Some(Rect::from_two_pos(d.start, d.cur));
+                                        self.pending_crop =
+                                            Some(Rect::from_two_pos(d.start, d.cur));
                                     }
                                 } else if tool == Tool::Read {
                                     if (d.cur - d.start).length() > 8.0 {
-                                        if let Some(c) = self.rect_to_crop(Rect::from_two_pos(d.start, d.cur)) {
-                                            ev = EditorEvent::ExtractText(capture::crop(&self.base, c.0, c.1, c.2, c.3));
+                                        if let Some(c) =
+                                            self.rect_to_crop(Rect::from_two_pos(d.start, d.cur))
+                                        {
+                                            ev = EditorEvent::ExtractText(capture::crop(
+                                                &self.base, c.0, c.1, c.2, c.3,
+                                            ));
                                         }
                                     }
                                 } else if let Some(a) = self.make_ann(&d) {
@@ -569,7 +718,10 @@ impl Editor {
                         }
                         Tool::Ellipse => {
                             let r = Rect::from_two_pos(a, b);
-                            painter.add(Shape::closed_line(ellipse_points(r.center(), r.width() / 2.0, r.height() / 2.0), stroke));
+                            painter.add(Shape::closed_line(
+                                ellipse_points(r.center(), r.width() / 2.0, r.height() / 2.0),
+                                stroke,
+                            ));
                         }
                         Tool::Blur => {
                             let r = Rect::from_two_pos(a, b);
@@ -580,7 +732,12 @@ impl Editor {
                             let pts: Vec<Pos2> = d.pts.iter().map(|p| to_scr(*p)).collect();
                             let (c, w) = if tool == Tool::Highlight {
                                 (
-                                    Color32::from_rgba_unmultiplied(self.color[0], self.color[1], self.color[2], 100),
+                                    Color32::from_rgba_unmultiplied(
+                                        self.color[0],
+                                        self.color[1],
+                                        self.color[2],
+                                        100,
+                                    ),
                                     self.width * 4.0 * scale + 6.0,
                                 )
                             } else {
@@ -605,25 +762,37 @@ impl Editor {
         let mut commit: Option<(Pos2, String)> = None;
         let mut cancel = false;
         if let Some((p, s)) = &mut self.pending_text {
-            egui::Window::new("Add text").collapsible(false).resizable(false).show(ctx, |ui| {
-                let r = ui.add(egui::TextEdit::multiline(s).desired_rows(3).desired_width(260.0));
-                if !r.has_focus() && s.is_empty() {
-                    r.request_focus();
-                }
-                ui.horizontal(|ui| {
-                    if crate::ui::primary_button(ui, "Add").clicked() {
-                        commit = Some((*p, s.clone()));
+            egui::Window::new("Add text")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    let r = ui.add(
+                        egui::TextEdit::multiline(s)
+                            .desired_rows(3)
+                            .desired_width(260.0),
+                    );
+                    if !r.has_focus() && s.is_empty() {
+                        r.request_focus();
                     }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
+                    ui.horizontal(|ui| {
+                        if crate::ui::primary_button(ui, "Add").clicked() {
+                            commit = Some((*p, s.clone()));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
                 });
-            });
         }
         if let Some((p, s)) = commit {
             if !s.trim().is_empty() {
                 let size = 14.0 + self.width * 3.0;
-                self.commit_ann(Ann::Text { p, text: s, color: col, size });
+                self.commit_ann(Ann::Text {
+                    p,
+                    text: s,
+                    color: col,
+                    size,
+                });
             }
             self.pending_text = None;
         } else if cancel {
@@ -635,9 +804,31 @@ impl Editor {
 
 fn draw_crop_overlay(p: &egui::Painter, image_rect: Rect, sel: Rect) {
     let dim = Color32::from_black_alpha(140);
-    p.rect_filled(Rect::from_min_max(image_rect.min, pos2(image_rect.max.x, sel.min.y)), 0.0, dim);
-    p.rect_filled(Rect::from_min_max(pos2(image_rect.min.x, sel.max.y), image_rect.max), 0.0, dim);
-    p.rect_filled(Rect::from_min_max(pos2(image_rect.min.x, sel.min.y), pos2(sel.min.x, sel.max.y)), 0.0, dim);
-    p.rect_filled(Rect::from_min_max(pos2(sel.max.x, sel.min.y), pos2(image_rect.max.x, sel.max.y)), 0.0, dim);
+    p.rect_filled(
+        Rect::from_min_max(image_rect.min, pos2(image_rect.max.x, sel.min.y)),
+        0.0,
+        dim,
+    );
+    p.rect_filled(
+        Rect::from_min_max(pos2(image_rect.min.x, sel.max.y), image_rect.max),
+        0.0,
+        dim,
+    );
+    p.rect_filled(
+        Rect::from_min_max(
+            pos2(image_rect.min.x, sel.min.y),
+            pos2(sel.min.x, sel.max.y),
+        ),
+        0.0,
+        dim,
+    );
+    p.rect_filled(
+        Rect::from_min_max(
+            pos2(sel.max.x, sel.min.y),
+            pos2(image_rect.max.x, sel.max.y),
+        ),
+        0.0,
+        dim,
+    );
     p.rect_stroke(sel, 0.0, Stroke::new(2.0, ACCENT));
 }

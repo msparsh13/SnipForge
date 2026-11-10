@@ -6,14 +6,50 @@ use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke,
 
 #[derive(Clone, Debug)]
 pub enum Ann {
-    Arrow { a: Pos2, b: Pos2, color: Color32, w: f32 },
-    Rect { a: Pos2, b: Pos2, color: Color32, w: f32 },
-    Ellipse { a: Pos2, b: Pos2, color: Color32, w: f32 },
-    Pen { pts: Vec<Pos2>, color: Color32, w: f32 },
-    Highlight { pts: Vec<Pos2>, color: Color32, w: f32 },
-    Text { p: Pos2, text: String, color: Color32, size: f32 },
-    Step { p: Pos2, n: u32, color: Color32, w: f32 },
-    Blur { a: Pos2, b: Pos2 },
+    Arrow {
+        a: Pos2,
+        b: Pos2,
+        color: Color32,
+        w: f32,
+    },
+    Rect {
+        a: Pos2,
+        b: Pos2,
+        color: Color32,
+        w: f32,
+    },
+    Ellipse {
+        a: Pos2,
+        b: Pos2,
+        color: Color32,
+        w: f32,
+    },
+    Pen {
+        pts: Vec<Pos2>,
+        color: Color32,
+        w: f32,
+    },
+    Highlight {
+        pts: Vec<Pos2>,
+        color: Color32,
+        w: f32,
+    },
+    Text {
+        p: Pos2,
+        text: String,
+        color: Color32,
+        size: f32,
+    },
+    Step {
+        p: Pos2,
+        n: u32,
+        color: Color32,
+        w: f32,
+    },
+    Blur {
+        a: Pos2,
+        b: Pos2,
+    },
 }
 
 impl Ann {
@@ -21,7 +57,10 @@ impl Ann {
     pub fn translate(&mut self, dx: f32, dy: f32) {
         let d = eframe::egui::vec2(dx, dy);
         match self {
-            Ann::Arrow { a, b, .. } | Ann::Rect { a, b, .. } | Ann::Ellipse { a, b, .. } | Ann::Blur { a, b } => {
+            Ann::Arrow { a, b, .. }
+            | Ann::Rect { a, b, .. }
+            | Ann::Ellipse { a, b, .. }
+            | Ann::Blur { a, b } => {
                 *a += d;
                 *b += d;
             }
@@ -106,8 +145,14 @@ fn draw(pm: &mut Pixmap, ann: &Ann, font: Option<&fontdue::Font>) {
             }
             let ang = dy.atan2(dx);
             let head = 10.0 + *w * 2.5;
-            let h1 = (b.x - head * (ang - 0.45).cos(), b.y - head * (ang - 0.45).sin());
-            let h2 = (b.x - head * (ang + 0.45).cos(), b.y - head * (ang + 0.45).sin());
+            let h1 = (
+                b.x - head * (ang - 0.45).cos(),
+                b.y - head * (ang - 0.45).sin(),
+            );
+            let h2 = (
+                b.x - head * (ang + 0.45).cos(),
+                b.y - head * (ang + 0.45).sin(),
+            );
             let mid = ((h1.0 + h2.0) / 2.0, (h1.1 + h2.1) / 2.0);
             let paint = paint_for(*color, 1.0);
 
@@ -115,7 +160,13 @@ fn draw(pm: &mut Pixmap, ann: &Ann, font: Option<&fontdue::Font>) {
             pb.move_to(a.x, a.y);
             pb.line_to(mid.0, mid.1);
             if let Some(path) = pb.finish() {
-                pm.stroke_path(&path, &paint, &stroke_of(*w, LineCap::Round), Transform::identity(), None);
+                pm.stroke_path(
+                    &path,
+                    &paint,
+                    &stroke_of(*w, LineCap::Round),
+                    Transform::identity(),
+                    None,
+                );
             }
             let mut pb = PathBuilder::new();
             pb.move_to(b.x, b.y);
@@ -123,33 +174,68 @@ fn draw(pm: &mut Pixmap, ann: &Ann, font: Option<&fontdue::Font>) {
             pb.line_to(h2.0, h2.1);
             pb.close();
             if let Some(path) = pb.finish() {
-                pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                pm.fill_path(
+                    &path,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
             }
         }
         Ann::Rect { a, b, color, w } => {
             if let Some(r) = norm_rect(*a, *b) {
                 let path = PathBuilder::from_rect(r);
-                pm.stroke_path(&path, &paint_for(*color, 1.0), &stroke_of(*w, LineCap::Butt), Transform::identity(), None);
+                pm.stroke_path(
+                    &path,
+                    &paint_for(*color, 1.0),
+                    &stroke_of(*w, LineCap::Butt),
+                    Transform::identity(),
+                    None,
+                );
             }
         }
         Ann::Ellipse { a, b, color, w } => {
             if let Some(r) = norm_rect(*a, *b) {
                 if let Some(path) = PathBuilder::from_oval(r) {
-                    pm.stroke_path(&path, &paint_for(*color, 1.0), &stroke_of(*w, LineCap::Butt), Transform::identity(), None);
+                    pm.stroke_path(
+                        &path,
+                        &paint_for(*color, 1.0),
+                        &stroke_of(*w, LineCap::Butt),
+                        Transform::identity(),
+                        None,
+                    );
                 }
             }
         }
         Ann::Pen { pts, color, w } => {
             if let Some(path) = poly_path(pts) {
-                pm.stroke_path(&path, &paint_for(*color, 1.0), &stroke_of(*w, LineCap::Round), Transform::identity(), None);
+                pm.stroke_path(
+                    &path,
+                    &paint_for(*color, 1.0),
+                    &stroke_of(*w, LineCap::Round),
+                    Transform::identity(),
+                    None,
+                );
             }
         }
         Ann::Highlight { pts, color, w } => {
             if let Some(path) = poly_path(pts) {
-                pm.stroke_path(&path, &paint_for(*color, 0.38), &stroke_of(*w * 4.0 + 6.0, LineCap::Round), Transform::identity(), None);
+                pm.stroke_path(
+                    &path,
+                    &paint_for(*color, 0.38),
+                    &stroke_of(*w * 4.0 + 6.0, LineCap::Round),
+                    Transform::identity(),
+                    None,
+                );
             }
         }
-        Ann::Text { p, text, color, size } => {
+        Ann::Text {
+            p,
+            text,
+            color,
+            size,
+        } => {
             if let Some(f) = font {
                 draw_text(pm, f, *p, text, *size, *color);
             }
@@ -157,14 +243,36 @@ fn draw(pm: &mut Pixmap, ann: &Ann, font: Option<&fontdue::Font>) {
         Ann::Step { p, n, color, w } => {
             let r = 13.0 + *w * 1.5;
             if let Some(path) = PathBuilder::from_circle(p.x, p.y, r) {
-                pm.fill_path(&path, &paint_for(*color, 1.0), FillRule::Winding, Transform::identity(), None);
-                pm.stroke_path(&path, &paint_for(Color32::WHITE, 1.0), &stroke_of(2.0, LineCap::Butt), Transform::identity(), None);
+                pm.fill_path(
+                    &path,
+                    &paint_for(*color, 1.0),
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+                pm.stroke_path(
+                    &path,
+                    &paint_for(Color32::WHITE, 1.0),
+                    &stroke_of(2.0, LineCap::Butt),
+                    Transform::identity(),
+                    None,
+                );
             }
             if let Some(f) = font {
                 let size = r * 1.2;
                 let label = n.to_string();
-                let tw: f32 = label.chars().map(|c| f.metrics(c, size).advance_width).sum();
-                draw_text(pm, f, Pos2::new(p.x - tw / 2.0, p.y - size * 0.64), &label, size, Color32::WHITE);
+                let tw: f32 = label
+                    .chars()
+                    .map(|c| f.metrics(c, size).advance_width)
+                    .sum();
+                draw_text(
+                    pm,
+                    f,
+                    Pos2::new(p.x - tw / 2.0, p.y - size * 0.64),
+                    &label,
+                    size,
+                    Color32::WHITE,
+                );
             }
         }
         Ann::Blur { a, b } => pixelate(pm, *a, *b, 12),
@@ -232,7 +340,12 @@ fn pixelate(pm: &mut Pixmap, a: Pos2, b: Pos2, block: i32) {
                 }
             }
             if n > 0 {
-                let avg = [(sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8, (sum[3] / n) as u8];
+                let avg = [
+                    (sum[0] / n) as u8,
+                    (sum[1] / n) as u8,
+                    (sum[2] / n) as u8,
+                    (sum[3] / n) as u8,
+                ];
                 for y in by..ey {
                     for x in bx..ex {
                         let i = ((y * w + x) * 4) as usize;

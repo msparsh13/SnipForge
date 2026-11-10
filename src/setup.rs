@@ -76,7 +76,9 @@ pub fn ffmpeg_path() -> Option<PathBuf> {
         return Some(p);
     }
     let mut c = Command::new("ffmpeg");
-    c.arg("-version").stdout(Stdio::null()).stderr(Stdio::null());
+    c.arg("-version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     no_window(&mut c);
     match c.status() {
         Ok(s) if s.success() => Some(PathBuf::from("ffmpeg")),
@@ -90,16 +92,22 @@ fn download(url: &str, path: &Path, p: &Progress) -> Result<(), String> {
         .timeout_read(Duration::from_secs(60))
         .build();
     let resp = agent.get(url).call().map_err(|e| e.to_string())?;
-    let total = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+    let total = resp
+        .header("Content-Length")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
     p.total.store(total, Ordering::Relaxed);
     p.done.store(0, Ordering::Relaxed);
     p.phase.store(0, Ordering::Relaxed);
 
     let mut reader = resp.into_reader();
-    let mut file = File::create(path).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    let mut file =
+        File::create(path).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     let mut buf = vec![0u8; 64 * 1024];
     loop {
-        let n = reader.read(&mut buf).map_err(|e| format!("connection lost: {e}"))?;
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("connection lost: {e}"))?;
         if n == 0 {
             break;
         }
@@ -119,7 +127,8 @@ fn extract_ffmpeg(zip_path: &Path, out: &Path, p: &Progress) -> Result<(), Strin
         let name = entry.name().replace('\\', "/");
         if name.ends_with("/bin/ffmpeg.exe") || name == "ffmpeg.exe" {
             let tmp = out.with_extension("part");
-            let mut f = File::create(&tmp).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+            let mut f =
+                File::create(&tmp).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
             std::io::copy(&mut entry, &mut f).map_err(|e| e.to_string())?;
             drop(f);
             std::fs::rename(&tmp, out).map_err(|e| e.to_string())?;
@@ -142,7 +151,8 @@ pub fn install_ffmpeg(progress: Arc<Progress>) -> Result<PathBuf, String> {
             Ok(()) => match extract_ffmpeg(&zip_path, &dest.join("ffmpeg.exe"), &progress) {
                 Ok(()) => {
                     let _ = std::fs::remove_file(&zip_path);
-                    return ffmpeg_path().ok_or_else(|| "ffmpeg was unpacked but cannot be started".to_string());
+                    return ffmpeg_path()
+                        .ok_or_else(|| "ffmpeg was unpacked but cannot be started".to_string());
                 }
                 Err(e) => errors.push(format!("{url}\n   unpack failed: {e}")),
             },
@@ -163,7 +173,9 @@ pub fn import_ffmpeg(src: &Path) -> Result<PathBuf, String> {
     let dest = dest_dir.join("ffmpeg.exe");
     std::fs::copy(src, &dest).map_err(|e| format!("Could not copy the file: {e}"))?;
     let mut c = Command::new(&dest);
-    c.arg("-version").stdout(Stdio::null()).stderr(Stdio::null());
+    c.arg("-version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     no_window(&mut c);
     match c.status() {
         Ok(s) if s.success() => Ok(dest),

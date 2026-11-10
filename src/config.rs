@@ -42,13 +42,17 @@ impl Default for Settings {
 }
 
 fn config_file() -> PathBuf {
-    let d = dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("SnipForge");
+    let d = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("SnipForge");
     let _ = std::fs::create_dir_all(&d);
     d.join("settings.txt")
 }
 
 pub fn default_shots_dir() -> PathBuf {
-    dirs::picture_dir().unwrap_or_else(|| PathBuf::from(".")).join("SnipForge")
+    dirs::picture_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("SnipForge")
 }
 
 pub fn default_videos_dir() -> PathBuf {
@@ -59,7 +63,9 @@ pub fn default_videos_dir() -> PathBuf {
 }
 
 pub fn default_text_dir() -> PathBuf {
-    dirs::document_dir().unwrap_or_else(|| PathBuf::from(".")).join("SnipForge Text")
+    dirs::document_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("SnipForge Text")
 }
 
 pub fn default_engine_dir() -> PathBuf {

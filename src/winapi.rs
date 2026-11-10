@@ -21,7 +21,8 @@ extern "system" {
     fn GetCursorPos(p: *mut Point) -> i32;
     fn mouse_event(flags: u32, dx: i32, dy: i32, data: i32, extra: usize);
     fn SetProcessDpiAwarenessContext(value: isize) -> i32;
-    fn EnumDisplayMonitors(hdc: isize, clip: *const Rect4, cb: MonitorEnumProc, data: isize) -> i32;
+    fn EnumDisplayMonitors(hdc: isize, clip: *const Rect4, cb: MonitorEnumProc, data: isize)
+        -> i32;
     fn GetMonitorInfoW(monitor: isize, info: *mut MonitorInfo) -> i32;
 }
 
@@ -158,8 +159,18 @@ pub fn virtual_rect() -> (i32, i32, u32, u32) {
 
 unsafe extern "system" fn monitor_cb(h: isize, _hdc: isize, _r: *mut Rect4, data: isize) -> i32 {
     let list = &mut *(data as *mut Vec<(i32, i32, u32, u32)>);
-    let zero = Rect4 { left: 0, top: 0, right: 0, bottom: 0 };
-    let mut mi = MonitorInfo { size: std::mem::size_of::<MonitorInfo>() as u32, monitor: zero, work: zero, flags: 0 };
+    let zero = Rect4 {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    let mut mi = MonitorInfo {
+        size: std::mem::size_of::<MonitorInfo>() as u32,
+        monitor: zero,
+        work: zero,
+        flags: 0,
+    };
     if GetMonitorInfoW(h, &mut mi) != 0 {
         list.push((
             mi.monitor.left,
@@ -175,7 +186,12 @@ unsafe extern "system" fn monitor_cb(h: isize, _hdc: isize, _r: *mut Rect4, data
 pub fn monitors() -> Vec<(i32, i32, u32, u32)> {
     let mut v: Vec<(i32, i32, u32, u32)> = Vec::new();
     unsafe {
-        EnumDisplayMonitors(0, ptr::null(), monitor_cb, &mut v as *mut Vec<(i32, i32, u32, u32)> as isize);
+        EnumDisplayMonitors(
+            0,
+            ptr::null(),
+            monitor_cb,
+            &mut v as *mut Vec<(i32, i32, u32, u32)> as isize,
+        );
     }
     v.sort_by_key(|m| (m.0, m.1));
     v

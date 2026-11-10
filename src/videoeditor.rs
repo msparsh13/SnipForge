@@ -5,9 +5,13 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, pos2, vec2, Align2, Color32, FontId, Rect, RichText, Sense, Shape, Stroke};
+use eframe::egui::{
+    self, pos2, vec2, Align2, Color32, FontId, Rect, RichText, Sense, Shape, Stroke,
+};
 
-use crate::captions::{fmt_time, keeps_intersect, keeps_subtract, map_captions, read_srt, write_srt, Caption};
+use crate::captions::{
+    fmt_time, keeps_intersect, keeps_subtract, map_captions, read_srt, write_srt, Caption,
+};
 use crate::media::{self, ExportJob, ExportParams, Fmt, PlayJob, Quality, VideoInfo};
 use crate::ui::{self, ACCENT, BG, BORDER, DANGER, PANEL, TEXT, TEXT_DIM};
 use crate::{setup, util};
@@ -33,13 +37,18 @@ impl eframe::App for ErrorApp {
 pub fn run(arg: Option<String>) -> Result<(), eframe::Error> {
     let path = match arg {
         Some(p) => PathBuf::from(p),
-        None => match rfd::FileDialog::new().add_filter("Video", &["mp4", "webm", "mkv", "mov", "avi"]).pick_file() {
+        None => match rfd::FileDialog::new()
+            .add_filter("Video", &["mp4", "webm", "mkv", "mov", "avi"])
+            .pick_file()
+        {
             Some(p) => p,
             None => return Ok(()),
         },
     };
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("SnipForge - Video editor").with_inner_size([1320.0, 800.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_title("SnipForge - Video editor")
+            .with_inner_size([1320.0, 800.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -117,7 +126,11 @@ impl VideoApp {
             });
         }
         let srt_path = path.with_extension("srt");
-        let caps = if srt_path.exists() { read_srt(&srt_path).unwrap_or_default() } else { Vec::new() };
+        let caps = if srt_path.exists() {
+            read_srt(&srt_path).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let _ = req_tx.send(0.0);
         let keeps = vec![(0.0, info.duration)];
         Ok(VideoApp {
@@ -147,7 +160,8 @@ impl VideoApp {
             quality: Quality::Balanced,
             burn: true,
             save_srt: false,
-            status: "Drag on the timeline to select a range, then delete it or keep only it.".to_string(),
+            status: "Drag on the timeline to select a range, then delete it or keep only it."
+                .to_string(),
             last_save: Instant::now(),
             srt_path,
             ctx,
@@ -186,10 +200,21 @@ impl VideoApp {
     fn start_play(&mut self) {
         let mut t = self.playhead;
         if !self.in_keeps(t) {
-            t = self.next_keep_start(t).or_else(|| self.keeps.first().map(|k| k.0)).unwrap_or(0.0);
+            t = self
+                .next_keep_start(t)
+                .or_else(|| self.keeps.first().map(|k| k.0))
+                .unwrap_or(0.0);
         }
         self.playhead = t;
-        self.play = Some(PlayJob::start(self.ctx.clone(), self.ff.clone(), self.path.clone(), t, self.pw, self.ph, self.speed()));
+        self.play = Some(PlayJob::start(
+            self.ctx.clone(),
+            self.ff.clone(),
+            self.path.clone(),
+            t,
+            self.pw,
+            self.ph,
+            self.speed(),
+        ));
     }
 
     fn tick_play(&mut self, ctx: &egui::Context) {
@@ -266,8 +291,16 @@ impl VideoApp {
 
     // ------------------------------------------------------------ export
     fn start_export(&mut self, ctx: &egui::Context) {
-        let stem = self.path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "video".to_string());
-        let dir = self.path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let stem = self
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "video".to_string());
+        let dir = self
+            .path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
         let Some(mut out) = rfd::FileDialog::new()
             .set_directory(dir)
             .set_file_name(format!("{stem}_edited.{}", self.fmt.ext()))
@@ -308,7 +341,8 @@ impl VideoApp {
     // ------------------------------------------------------------ timeline
     fn ui_timeline(&mut self, ui: &mut egui::Ui) {
         let dur = self.info.duration.max(0.1);
-        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 88.0), Sense::click_and_drag());
+        let (rect, resp) =
+            ui.allocate_exact_size(vec2(ui.available_width(), 88.0), Sense::click_and_drag());
         let (l, r) = (rect.min.x + 10.0, rect.max.x - 10.0);
         let x_of = |t: f64| l + (t / dur) as f32 * (r - l);
         let t_of = |x: f32| (((x - l) / (r - l)) as f64).clamp(0.0, 1.0) * dur;
@@ -335,27 +369,55 @@ impl VideoApp {
         let track = Rect::from_min_max(pos2(l, rect.min.y + 18.0), pos2(r, rect.min.y + 52.0));
         p.rect_filled(track, 6.0, Color32::from_rgb(244, 205, 208)); // cut-out parts
         for &(s, e) in &self.keeps {
-            let seg = Rect::from_min_max(pos2(x_of(s), track.min.y), pos2(x_of(e).max(x_of(s) + 1.0), track.max.y));
+            let seg = Rect::from_min_max(
+                pos2(x_of(s), track.min.y),
+                pos2(x_of(e).max(x_of(s) + 1.0), track.max.y),
+            );
             p.rect_filled(seg, 0.0, Color32::from_rgb(120, 160, 235));
         }
         for c in &self.caps {
-            let seg = Rect::from_min_max(pos2(x_of(c.start), track.max.y + 6.0), pos2(x_of(c.end).max(x_of(c.start) + 2.0), track.max.y + 14.0));
+            let seg = Rect::from_min_max(
+                pos2(x_of(c.start), track.max.y + 6.0),
+                pos2(x_of(c.end).max(x_of(c.start) + 2.0), track.max.y + 14.0),
+            );
             p.rect_filled(seg, 2.0, Color32::from_rgb(255, 196, 60));
         }
         if let Some((a, b)) = self.sel {
-            let sr = Rect::from_min_max(pos2(x_of(a), track.min.y - 4.0), pos2(x_of(b), track.max.y + 4.0));
+            let sr = Rect::from_min_max(
+                pos2(x_of(a), track.min.y - 4.0),
+                pos2(x_of(b), track.max.y + 4.0),
+            );
             p.rect_filled(sr, 0.0, Color32::from_black_alpha(40));
             p.rect_stroke(sr, 0.0, Stroke::new(1.5, TEXT));
         }
         let hx = x_of(self.playhead);
-        p.line_segment([pos2(hx, rect.min.y + 8.0), pos2(hx, track.max.y + 16.0)], Stroke::new(2.0, DANGER));
+        p.line_segment(
+            [pos2(hx, rect.min.y + 8.0), pos2(hx, track.max.y + 16.0)],
+            Stroke::new(2.0, DANGER),
+        );
         p.add(Shape::convex_polygon(
-            vec![pos2(hx - 6.0, rect.min.y + 4.0), pos2(hx + 6.0, rect.min.y + 4.0), pos2(hx, rect.min.y + 14.0)],
+            vec![
+                pos2(hx - 6.0, rect.min.y + 4.0),
+                pos2(hx + 6.0, rect.min.y + 4.0),
+                pos2(hx, rect.min.y + 14.0),
+            ],
             DANGER,
             Stroke::NONE,
         ));
-        p.text(pos2(l, rect.max.y - 8.0), Align2::LEFT_CENTER, fmt_time(0.0), FontId::proportional(11.0), TEXT_DIM);
-        p.text(pos2(r, rect.max.y - 8.0), Align2::RIGHT_CENTER, fmt_time(dur), FontId::proportional(11.0), TEXT_DIM);
+        p.text(
+            pos2(l, rect.max.y - 8.0),
+            Align2::LEFT_CENTER,
+            fmt_time(0.0),
+            FontId::proportional(11.0),
+            TEXT_DIM,
+        );
+        p.text(
+            pos2(r, rect.max.y - 8.0),
+            Align2::RIGHT_CENTER,
+            fmt_time(dur),
+            FontId::proportional(11.0),
+            TEXT_DIM,
+        );
     }
 }
 
@@ -395,17 +457,32 @@ impl eframe::App for VideoApp {
         // ---------------------------------------------------------------- right panel
         egui::SidePanel::right("side")
             .exact_width(410.0)
-            .frame(egui::Frame::none().fill(PANEL).inner_margin(egui::Margin::same(14.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(PANEL)
+                    .inner_margin(egui::Margin::same(14.0)),
+            )
             .show(ctx, |ui| {
                 ui.label(RichText::new("Captions").size(17.0).strong());
-                ui.label(RichText::new("Type captions by hand, or import an .srt file.").size(12.0).color(TEXT_DIM));
+                ui.label(
+                    RichText::new("Type captions by hand, or import an .srt file.")
+                        .size(12.0)
+                        .color(TEXT_DIM),
+                );
                 ui.horizontal_wrapped(|ui| {
                     if ui.button("+ Add at playhead").clicked() {
                         let t = self.playhead;
-                        self.caps.push(Caption { start: t, end: (t + 2.0).min(dur), text: "New caption".to_string() });
+                        self.caps.push(Caption {
+                            start: t,
+                            end: (t + 2.0).min(dur),
+                            text: "New caption".to_string(),
+                        });
                     }
                     if ui.button("Import .srt").clicked() {
-                        if let Some(p) = rfd::FileDialog::new().add_filter("Subtitles", &["srt"]).pick_file() {
+                        if let Some(p) = rfd::FileDialog::new()
+                            .add_filter("Subtitles", &["srt"])
+                            .pick_file()
+                        {
                             match read_srt(&p) {
                                 Ok(c) => self.caps = c,
                                 Err(e) => self.status = format!("Could not read the file: {e}"),
@@ -413,9 +490,15 @@ impl eframe::App for VideoApp {
                         }
                     }
                     if ui.button("Export .srt").clicked() {
-                        if let Some(p) = rfd::FileDialog::new().add_filter("Subtitles", &["srt"]).set_file_name("captions.srt").save_file() {
-                            let _ = write_srt(&map_captions(&self.caps, &self.keeps, self.speed()), &p);
-                            self.status = "Saved subtitles (timed for your edited video).".to_string();
+                        if let Some(p) = rfd::FileDialog::new()
+                            .add_filter("Subtitles", &["srt"])
+                            .set_file_name("captions.srt")
+                            .save_file()
+                        {
+                            let _ =
+                                write_srt(&map_captions(&self.caps, &self.keeps, self.speed()), &p);
+                            self.status =
+                                "Saved subtitles (timed for your edited video).".to_string();
                         }
                     }
                     if ui.button("Clear all").clicked() {
@@ -424,11 +507,13 @@ impl eframe::App for VideoApp {
                     }
                 });
                 ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_source("capsize").selected_text(CAP_NAMES[self.cap_size]).show_ui(ui, |ui| {
-                        for (i, n) in CAP_NAMES.iter().enumerate() {
-                            ui.selectable_value(&mut self.cap_size, i, *n);
-                        }
-                    });
+                    egui::ComboBox::from_id_source("capsize")
+                        .selected_text(CAP_NAMES[self.cap_size])
+                        .show_ui(ui, |ui| {
+                            for (i, n) in CAP_NAMES.iter().enumerate() {
+                                ui.selectable_value(&mut self.cap_size, i, *n);
+                            }
+                        });
                     ui.radio_value(&mut self.cap_top, false, "Bottom");
                     ui.radio_value(&mut self.cap_top, true, "Top");
                     ui.checkbox(&mut self.preview_caps, "Show in preview");
@@ -436,22 +521,40 @@ impl eframe::App for VideoApp {
 
                 let mut remove: Option<usize> = None;
                 let mut jump: Option<f64> = None;
-                egui::ScrollArea::vertical().max_height(300.0).auto_shrink([false, false]).show(ui, |ui| {
-                    for (i, c) in self.caps.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.add(egui::DragValue::new(&mut c.start).speed(0.05).fixed_decimals(2).clamp_range(0.0..=dur).suffix(" s"));
-                            ui.add(egui::DragValue::new(&mut c.end).speed(0.05).fixed_decimals(2).clamp_range(0.0..=dur).suffix(" s"));
-                            if ui.small_button("go").clicked() {
-                                jump = Some(c.start);
-                            }
-                            if ui.small_button("x").clicked() {
-                                remove = Some(i);
-                            }
-                        });
-                        ui.add(egui::TextEdit::singleline(&mut c.text).desired_width(f32::INFINITY));
-                        ui.add_space(4.0);
-                    }
-                });
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (i, c) in self.caps.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::DragValue::new(&mut c.start)
+                                        .speed(0.05)
+                                        .fixed_decimals(2)
+                                        .clamp_range(0.0..=dur)
+                                        .suffix(" s"),
+                                );
+                                ui.add(
+                                    egui::DragValue::new(&mut c.end)
+                                        .speed(0.05)
+                                        .fixed_decimals(2)
+                                        .clamp_range(0.0..=dur)
+                                        .suffix(" s"),
+                                );
+                                if ui.small_button("go").clicked() {
+                                    jump = Some(c.start);
+                                }
+                                if ui.small_button("x").clicked() {
+                                    remove = Some(i);
+                                }
+                            });
+                            ui.add(
+                                egui::TextEdit::singleline(&mut c.text)
+                                    .desired_width(f32::INFINITY),
+                            );
+                            ui.add_space(4.0);
+                        }
+                    });
                 if let Some(i) = remove {
                     self.caps.remove(i);
                 }
@@ -462,28 +565,49 @@ impl eframe::App for VideoApp {
                 ui.separator();
                 ui.label(RichText::new("Export").size(17.0).strong());
                 ui.horizontal_wrapped(|ui| {
-                    egui::ComboBox::from_id_source("fmt").selected_text(self.fmt.label()).show_ui(ui, |ui| {
-                        for f in [Fmt::Mp4, Fmt::WebM, Fmt::Gif, Fmt::Mp3] {
-                            ui.selectable_value(&mut self.fmt, f, f.label());
-                        }
-                    });
-                    egui::ComboBox::from_id_source("res")
-                        .selected_text(if self.res == 0 { "Original size".to_string() } else { format!("{}p", self.res) })
+                    egui::ComboBox::from_id_source("fmt")
+                        .selected_text(self.fmt.label())
                         .show_ui(ui, |ui| {
-                            for r in [0u32, 1080, 720, 480] {
-                                ui.selectable_value(&mut self.res, r, if r == 0 { "Original size".to_string() } else { format!("{r}p") });
+                            for f in [Fmt::Mp4, Fmt::WebM, Fmt::Gif, Fmt::Mp3] {
+                                ui.selectable_value(&mut self.fmt, f, f.label());
                             }
                         });
-                    egui::ComboBox::from_id_source("qual").selected_text(self.quality.label()).show_ui(ui, |ui| {
-                        for q in [Quality::High, Quality::Balanced, Quality::Small] {
-                            ui.selectable_value(&mut self.quality, q, q.label());
-                        }
-                    });
+                    egui::ComboBox::from_id_source("res")
+                        .selected_text(if self.res == 0 {
+                            "Original size".to_string()
+                        } else {
+                            format!("{}p", self.res)
+                        })
+                        .show_ui(ui, |ui| {
+                            for r in [0u32, 1080, 720, 480] {
+                                ui.selectable_value(
+                                    &mut self.res,
+                                    r,
+                                    if r == 0 {
+                                        "Original size".to_string()
+                                    } else {
+                                        format!("{r}p")
+                                    },
+                                );
+                            }
+                        });
+                    egui::ComboBox::from_id_source("qual")
+                        .selected_text(self.quality.label())
+                        .show_ui(ui, |ui| {
+                            for q in [Quality::High, Quality::Balanced, Quality::Small] {
+                                ui.selectable_value(&mut self.quality, q, q.label());
+                            }
+                        });
                 });
                 ui.checkbox(&mut self.burn, "Burn captions into the picture");
                 ui.checkbox(&mut self.save_srt, "Also save a .srt subtitle file");
                 if let Some(job) = &self.export {
-                    ui.add(egui::ProgressBar::new(job.progress.load(Ordering::Relaxed) as f32 / 1000.0).show_percentage());
+                    ui.add(
+                        egui::ProgressBar::new(
+                            job.progress.load(Ordering::Relaxed) as f32 / 1000.0,
+                        )
+                        .show_percentage(),
+                    );
                     if ui.button("Cancel export").clicked() {
                         job.cancel();
                     }

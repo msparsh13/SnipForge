@@ -35,9 +35,26 @@ extern "system" {
 #[link(name = "gdi32")]
 extern "system" {
     fn CreateCompatibleDC(hdc: Hdc) -> Hdc;
-    fn CreateDIBSection(hdc: Hdc, bmi: *const BitmapInfo, usage: u32, bits: *mut *mut c_void, section: isize, offset: u32) -> isize;
+    fn CreateDIBSection(
+        hdc: Hdc,
+        bmi: *const BitmapInfo,
+        usage: u32,
+        bits: *mut *mut c_void,
+        section: isize,
+        offset: u32,
+    ) -> isize;
     fn SelectObject(hdc: Hdc, obj: isize) -> isize;
-    fn BitBlt(dst: Hdc, x: i32, y: i32, w: i32, h: i32, src: Hdc, sx: i32, sy: i32, rop: u32) -> i32;
+    fn BitBlt(
+        dst: Hdc,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        src: Hdc,
+        sx: i32,
+        sy: i32,
+        rop: u32,
+    ) -> i32;
     fn DeleteObject(obj: isize) -> i32;
     fn DeleteDC(hdc: Hdc) -> i32;
 }
@@ -92,7 +109,17 @@ impl GdiGrabber {
                 return Err("could not allocate the capture buffer".to_string());
             }
             let old = SelectObject(mem, bmp);
-            Ok(GdiGrabber { screen, mem, bmp, old, bits: bits as *mut u8, x, y, w, h })
+            Ok(GdiGrabber {
+                screen,
+                mem,
+                bmp,
+                old,
+                bits: bits as *mut u8,
+                x,
+                y,
+                w,
+                h,
+            })
         }
     }
 
@@ -100,7 +127,17 @@ impl GdiGrabber {
     pub fn grab(&mut self) -> &[u8] {
         unsafe {
             // SRCCOPY | CAPTUREBLT (also captures layered / transparent windows)
-            BitBlt(self.mem, 0, 0, self.w, self.h, self.screen, self.x, self.y, 0x00CC0020 | 0x4000_0000);
+            BitBlt(
+                self.mem,
+                0,
+                0,
+                self.w,
+                self.h,
+                self.screen,
+                self.x,
+                self.y,
+                0x00CC0020 | 0x4000_0000,
+            );
             std::slice::from_raw_parts(self.bits, (self.w as usize) * (self.h as usize) * 4)
         }
     }

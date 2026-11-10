@@ -33,7 +33,9 @@ pub fn open_in_explorer(p: &Path) {
 }
 
 pub fn reveal_in_explorer(p: &Path) {
-    let _ = Command::new("explorer").arg(format!("/select,{}", p.display())).spawn();
+    let _ = Command::new("explorer")
+        .arg(format!("/select,{}", p.display()))
+        .spawn();
 }
 
 pub fn open_file(p: &Path) {
@@ -79,7 +81,11 @@ pub fn copy_image(img: &RgbaImage) -> Result<(), String> {
 }
 
 pub fn temp_png(prefix: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("{prefix}_{}_{}.png", timestamp(), std::process::id()))
+    std::env::temp_dir().join(format!(
+        "{prefix}_{}_{}.png",
+        timestamp(),
+        std::process::id()
+    ))
 }
 
 pub fn clipboard_image() -> Option<RgbaImage> {

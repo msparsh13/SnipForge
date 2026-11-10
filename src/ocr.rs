@@ -38,7 +38,12 @@ Write-Output $result.Text
 
 pub fn ocr(img: &RgbaImage) -> Result<String, String> {
     let big = if img.width() < 1200 {
-        image::imageops::resize(img, img.width() * 2, img.height() * 2, image::imageops::FilterType::Lanczos3)
+        image::imageops::resize(
+            img,
+            img.width() * 2,
+            img.height() * 2,
+            image::imageops::FilterType::Lanczos3,
+        )
     } else {
         img.clone()
     };
@@ -58,9 +63,12 @@ fn windows_ocr(path: &Path) -> Result<String, String> {
     let p = path.to_string_lossy().replace('\'', "''");
     let script = OCR_PS.replace("__IMG__", &p);
     let mut cmd = Command::new("powershell");
-    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]).arg(script);
+    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"])
+        .arg(script);
     no_window(&mut cmd);
-    let out = cmd.output().map_err(|e| format!("Could not start PowerShell: {e}"))?;
+    let out = cmd
+        .output()
+        .map_err(|e| format!("Could not start PowerShell: {e}"))?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }

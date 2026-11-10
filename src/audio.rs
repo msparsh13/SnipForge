@@ -32,21 +32,35 @@ fn friendly(e: impl std::fmt::Display, loopback: bool) -> String {
 /// `loopback = true` records what the computer is playing; `false` records the default microphone.
 /// While `paused` is set, incoming samples are dropped. While `enabled` is false they are replaced by silence
 /// (so muting never shifts the timeline). `level` always shows the loudest recent sample (0..1000).
-pub fn start_capture(loopback: bool, paused: Arc<AtomicBool>, enabled: Arc<AtomicBool>, level: Arc<AtomicU32>) -> Result<AudioCapture, String> {
+pub fn start_capture(
+    loopback: bool,
+    paused: Arc<AtomicBool>,
+    enabled: Arc<AtomicBool>,
+    level: Arc<AtomicU32>,
+) -> Result<AudioCapture, String> {
     let host = cpal::default_host();
     let (device, cfg) = if loopback {
-        let d = host.default_output_device().ok_or("No playback device found. Plug in or enable speakers / headphones.")?;
+        let d = host
+            .default_output_device()
+            .ok_or("No playback device found. Plug in or enable speakers / headphones.")?;
         let c = d.default_output_config().map_err(|e| friendly(e, true))?;
         (d, c)
     } else {
-        let d = host.default_input_device().ok_or("No microphone found. Plug one in or enable it in Windows sound settings.")?;
+        let d = host
+            .default_input_device()
+            .ok_or("No microphone found. Plug one in or enable it in Windows sound settings.")?;
         let c = d.default_input_config().map_err(|e| friendly(e, false))?;
         (d, c)
     };
     let fmt = cfg.sample_format();
     let rate = cfg.sample_rate().0;
     let channels = cfg.channels();
-    let config: cpal::StreamConfig = cfg.into();
+    let sample_format = cfg.sample_format();
+
+    let channels = if loopback { 2 } else { cfg.channels() };
+
+    let mut config: cpal::StreamConfig = cfg.into();
+    config.channels = channels;
 
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     let push = move |samples: Vec<f32>| {
@@ -74,13 +88,17 @@ pub fn start_capture(loopback: bool, paused: Arc<AtomicBool>, enabled: Arc<Atomi
         ),
         cpal::SampleFormat::I16 => device.build_input_stream(
             &config,
-            move |d: &[i16], _: &cpal::InputCallbackInfo| push(d.iter().map(|&s| s as f32 / 32768.0).collect()),
+            move |d: &[i16], _: &cpal::InputCallbackInfo| {
+                push(d.iter().map(|&s| s as f32 / 32768.0).collect())
+            },
             err_fn,
             None,
         ),
         cpal::SampleFormat::U16 => device.build_input_stream(
             &config,
-            move |d: &[u16], _: &cpal::InputCallbackInfo| push(d.iter().map(|&s| (s as f32 - 32768.0) / 32768.0).collect()),
+            move |d: &[u16], _: &cpal::InputCallbackInfo| {
+                push(d.iter().map(|&s| (s as f32 - 32768.0) / 32768.0).collect())
+            },
             err_fn,
             None,
         ),
@@ -88,13 +106,23 @@ pub fn start_capture(loopback: bool, paused: Arc<AtomicBool>, enabled: Arc<Atomi
     };
     let stream = built.map_err(|e| friendly(e, loopback))?;
     stream.play().map_err(|e| friendly(e, loopback))?;
-    Ok(AudioCapture { stream: Some(stream), rx, rate, channels })
+    Ok(AudioCapture {
+        stream: Some(stream),
+        rx,
+        rate,
+        channels,
+    })
 }
 
 /// Listen for a few seconds and report the loudest sound heard (0.0 .. 1.0). Used by the "Test" buttons.
 pub fn test_level(loopback: bool, secs: f32) -> Result<f32, String> {
     let level = Arc::new(AtomicU32::new(0));
-    let cap = start_capture(loopback, Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(true)), level.clone())?;
+    let cap = start_capture(
+        loopback,
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(true)),
+        level.clone(),
+    )?;
     let start = Instant::now();
     let mut peak = 0u32;
     while start.elapsed().as_secs_f32() < secs {
