@@ -14,6 +14,7 @@ mod media;
 mod ocr;
 mod perms;
 mod pinview;
+mod quicktray;
 mod record;
 mod render;
 mod setup;
@@ -31,6 +32,7 @@ fn main() -> Result<(), eframe::Error> {
         let extra = args.get(3).cloned();
         return match args[2].as_str() {
             "pin" => pinview::run(extra.unwrap_or_default()),
+            "tray" => quicktray::run(),
             "history" => histview::run(),
             "video" => videoeditor::run(extra),
             other => worker::run(other, extra),

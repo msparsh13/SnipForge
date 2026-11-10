@@ -455,7 +455,7 @@ impl Editor {
                 self.apply_pending_crop();
             } else if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.pending_crop = None;
-            }
+            }s
         }
 
         // ---- top bar
