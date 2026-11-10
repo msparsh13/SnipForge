@@ -1,4 +1,6 @@
 //! Scrolling capture: scroll the content under the pointer, grab frames, and stitch them.
+//! The scroll distance is calibrated automatically (about a third of the area per step), each step waits
+//! for the page to stop moving, and the page is brought to the front first so it accepts the scrolling.
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -10,12 +12,17 @@ use image::RgbaImage;
 use crate::gdi::GdiGrabber;
 use crate::winapi;
 
-const MAX_STEPS: u32 = 120;
+const MAX_STEPS: u32 = 150;
 
 enum Shift {
     Moved(usize), // content moved up by this many pixels
-    Same,         // nothing moved: end of the page
-    Unknown,
+    Same,         // nothing moved
+    Unknown,      // could not line the frames up
+}
+
+pub struct ScrollOutcome {
+    pub image: RgbaImage,
+    pub note: String, // empty when everything went fine
 }
 
 fn luma(bgra: &[u8]) -> Vec<u8> {
@@ -76,7 +83,7 @@ fn find_shift(prev: &[u8], cur: &[u8], w: usize, h: usize) -> Shift {
     }
     let samples = ((th + rstep - 1) / rstep) as u64 * ((w + cstep - 1) / cstep) as u64;
     let mean_diff = best.0 as f64 / samples as f64;
-    if mean_diff > 6.0 {
+    if mean_diff > 12.0 {
         return Shift::Unknown;
     }
     if best.1 == y0 {
@@ -88,10 +95,40 @@ fn find_shift(prev: &[u8], cur: &[u8], w: usize, h: usize) -> Shift {
     }
 }
 
+/// True when two frames are (nearly) identical, i.e. smooth scrolling has finished.
+fn frames_close(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() || a.is_empty() {
+        return false;
+    }
+    let (mut diff, mut n, mut i) = (0u64, 0u64, 0usize);
+    while i < a.len() {
+        diff += (a[i] as i32 - b[i] as i32).unsigned_abs() as u64;
+        n += 1;
+        i += 4 * 97 + 1;
+    }
+    (diff as f64 / n.max(1) as f64) < 0.8
+}
+
+/// Wait until the area stops changing, then return that frame.
+fn settle(grab: &mut GdiGrabber) -> Vec<u8> {
+    thread::sleep(Duration::from_millis(140));
+    let mut last = grab.grab().to_vec();
+    for _ in 0..14 {
+        thread::sleep(Duration::from_millis(110));
+        let cur = grab.grab().to_vec();
+        if frames_close(&last, &cur) {
+            return cur;
+        }
+        last = cur;
+    }
+    last
+}
+
 pub struct ScrollJob {
     stop: Arc<AtomicBool>,
     steps: Arc<AtomicU32>,
-    handle: Option<JoinHandle<Result<RgbaImage, String>>>,
+    rows: Arc<AtomicU32>,
+    handle: Option<JoinHandle<Result<ScrollOutcome, String>>>,
 }
 
 impl ScrollJob {
@@ -99,13 +136,14 @@ impl ScrollJob {
     pub fn start(ctx: egui::Context, region: (i32, i32, u32, u32)) -> ScrollJob {
         let stop = Arc::new(AtomicBool::new(false));
         let steps = Arc::new(AtomicU32::new(0));
-        let (s2, st2) = (stop.clone(), steps.clone());
+        let rows = Arc::new(AtomicU32::new(region.3));
+        let (s2, st2, r2) = (stop.clone(), steps.clone(), rows.clone());
         let handle = thread::spawn(move || {
-            let r = run(&ctx, region, &s2, &st2);
+            let r = run(&ctx, region, &s2, &st2, &r2);
             ctx.request_repaint();
             r
         });
-        ScrollJob { stop, steps, handle: Some(handle) }
+        ScrollJob { stop, steps, rows, handle: Some(handle) }
     }
 
     pub fn request_stop(&self) {
@@ -116,7 +154,12 @@ impl ScrollJob {
         self.steps.load(Ordering::Relaxed)
     }
 
-    pub fn poll(&mut self) -> Option<Result<RgbaImage, String>> {
+    /// Height of the stitched picture so far, in pixels.
+    pub fn rows(&self) -> u32 {
+        self.rows.load(Ordering::Relaxed)
+    }
+
+    pub fn poll(&mut self) -> Option<Result<ScrollOutcome, String>> {
         let done = self.handle.as_ref().map(|h| h.is_finished()).unwrap_or(false);
         if !done {
             return None;
@@ -126,21 +169,25 @@ impl ScrollJob {
     }
 }
 
-fn run(ctx: &egui::Context, region: (i32, i32, u32, u32), stop: &AtomicBool, steps: &AtomicU32) -> Result<RgbaImage, String> {
+fn run(ctx: &egui::Context, region: (i32, i32, u32, u32), stop: &AtomicBool, steps: &AtomicU32, rows_out: &AtomicU32) -> Result<ScrollOutcome, String> {
     let (x, y, w, h) = region;
     let (wu, hu) = (w as usize, h as usize);
     let mut grab = GdiGrabber::new(x, y, w as i32, h as i32)?;
 
-    // let the selection window shrink out of the way, then park the pointer over the page
-    thread::sleep(Duration::from_millis(900));
-    winapi::set_cursor(x + w as i32 / 2, y + h as i32 / 2);
-    thread::sleep(Duration::from_millis(250));
+    // let the selection window shrink out of the way, then bring the page to the front and park the pointer on it
+    thread::sleep(Duration::from_millis(1200));
+    let (cx, cy) = (x + w as i32 / 2, y + h as i32 / 2);
+    winapi::set_cursor(cx, cy);
+    winapi::focus_window_at(cx, cy);
+    thread::sleep(Duration::from_millis(400));
 
-    let first = grab.grab().to_vec();
+    let first = settle(&mut grab);
     let mut prev_luma = luma(&first);
     let mut pieces: Vec<Vec<u8>> = vec![first];
     let mut rows = hu;
+    let mut notches: i32 = 1; // start gently, then calibrate
     let mut done_steps = 0u32;
+    let mut note = String::new();
 
     while !stop.load(Ordering::SeqCst) && done_steps < MAX_STEPS {
         // only scroll while the pointer is over the page, so you can move away to press Stop
@@ -149,9 +196,8 @@ fn run(ctx: &egui::Context, region: (i32, i32, u32, u32), stop: &AtomicBool, ste
             thread::sleep(Duration::from_millis(150));
             continue;
         }
-        winapi::wheel(-360); // three notches down
-        thread::sleep(Duration::from_millis(450));
-        let cur = grab.grab().to_vec();
+        winapi::wheel(-120 * notches);
+        let cur = settle(&mut grab);
         let cur_luma = luma(&cur);
         match find_shift(&prev_luma, &cur_luma, wu, hu) {
             Shift::Moved(dy) if dy > 0 && dy <= hu => {
@@ -160,9 +206,22 @@ fn run(ctx: &egui::Context, region: (i32, i32, u32, u32), stop: &AtomicBool, ste
                 prev_luma = cur_luma;
                 done_steps += 1;
                 steps.store(done_steps, Ordering::Relaxed);
+                rows_out.store(rows as u32, Ordering::Relaxed);
                 ctx.request_repaint();
+                // aim for about a third of the area per step: far enough to be quick, short enough to line up
+                let per_notch = (dy as f32 / notches as f32).max(1.0);
+                notches = ((hu as f32 * 0.33) / per_notch).round().clamp(1.0, 12.0) as i32;
             }
-            _ => break, // end of the page (or no reliable match)
+            Shift::Same => {
+                if done_steps == 0 {
+                    note = "Nothing scrolled. Point at the part of the page that scrolls, or the page may already fit in the area.".to_string();
+                }
+                break; // end of the page
+            }
+            _ => {
+                note = format!("Stopped after {done_steps} steps: the page changed too much to line up the next piece (video, animation or a pop-up?).");
+                break;
+            }
         }
     }
 
@@ -172,5 +231,6 @@ fn run(ctx: &egui::Context, region: (i32, i32, u32, u32), stop: &AtomicBool, ste
             rgba.extend_from_slice(&[px[2], px[1], px[0], 255]);
         }
     }
-    RgbaImage::from_raw(w, rows as u32, rgba).ok_or_else(|| "could not build the stitched image".to_string())
+    let image = RgbaImage::from_raw(w, rows as u32, rgba).ok_or_else(|| "could not build the stitched image".to_string())?;
+    Ok(ScrollOutcome { image, note })
 }

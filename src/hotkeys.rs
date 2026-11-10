@@ -20,6 +20,7 @@ enum Cmd {
     Scroll,
     PinRegion,
     History,
+    Snap,
 }
 
 /// Keep the returned manager alive for as long as the app runs.
@@ -37,6 +38,7 @@ pub fn setup() -> Option<GlobalHotKeyManager> {
         (Code::KeyS, Cmd::Scroll),
         (Code::KeyN, Cmd::PinRegion),
         (Code::KeyH, Cmd::History),
+        (Code::KeyK, Cmd::Snap),
     ] {
         let hk = HotKey::new(Some(mods), code);
         let id = hk.id();
@@ -71,11 +73,16 @@ pub fn setup() -> Option<GlobalHotKeyManager> {
                     }
                     Cmd::PinRegion => util::spawn_worker("pinregion", None),
                     Cmd::History => util::spawn_worker("history", None),
+                    Cmd::Snap => {
+                        if util::recording_active() {
+                            util::request_snap();
+                        }
+                    }
                     Cmd::RecordFull => {
                         if util::recording_active() {
                             util::request_stop();
                         } else {
-                            util::spawn_worker("recordfull", None);
+                            util::spawn_worker("record", Some("full"));
                         }
                     }
                     Cmd::Pause => {

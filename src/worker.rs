@@ -12,8 +12,9 @@ use image::RgbaImage;
 use crate::config::Settings;
 use crate::editor::{Editor, EditorEvent};
 use crate::record::{RecOptions, Recorder};
-use crate::stitch::ScrollJob;
-use crate::ui::{self, ACCENT, ACCENT_SOFT, BG, BORDER, CARD, DANGER, OVERLAY, TEXT_DIM, WARN};
+use crate::perms::{self, MicAccess};
+use crate::stitch::{ScrollJob, ScrollOutcome};
+use crate::ui::{self, ACCENT, ACCENT_SOFT, BG, BORDER, CARD, DANGER, OVERLAY, SUCCESS, TEXT_DIM, WARN};
 use crate::{capture, ocr, render, setup, util, winapi};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -23,6 +24,21 @@ enum Purpose {
     Record,
     Scroll,
     Pin,
+}
+
+/// What to start once the countdown has finished.
+#[derive(Clone, Copy)]
+enum Then {
+    Record(ScreenRect),
+    Scroll(ScreenRect),
+}
+
+/// What to capture: drag an area, everything, or one particular screen.
+#[derive(Clone, Copy, PartialEq)]
+enum Target {
+    Area,
+    Full,
+    Monitor(usize), // 1-based
 }
 
 enum WMsg {
@@ -52,7 +68,8 @@ enum WMode {
     RecDone(Result<PathBuf, String>),
     Message(String),
     Scrolling { job: ScrollJob },
-    Countdown { total: u32, ends: Option<Instant>, then: Option<ScreenRect> },
+    Countdown { total: u32, ends: Option<Instant>, then: Option<Then> },
+    AudioPrompt { region: ScreenRect, reason: String },
 }
 
 #[derive(Clone, Copy)]
@@ -67,6 +84,7 @@ enum View {
     Message,
     Countdown,
     Scrolling,
+    AudioPrompt,
 }
 
 pub struct WorkerApp {
@@ -85,6 +103,11 @@ pub struct WorkerApp {
     virt: ScreenRect,
     monitors: Vec<ScreenRect>,
     kind: String, // which capture this process was started for (used to restart after installing ffmpeg)
+    kind_arg: Option<String>,
+    rec_region: Option<ScreenRect>,
+    mic_vu: f32,
+    sys_vu: f32,
+    toast: Option<(String, Instant)>,
 }
 
 // ------------------------------------------------------------------ startup
@@ -117,7 +140,30 @@ fn run_countdown(secs: u32) {
     thread::sleep(Duration::from_secs(secs as u64)); // fallback: silent wait
 }
 
-fn prepare(kind: &str, arg: Option<String>, settings: &Settings, font: &Option<Arc<fontdue::Font>>, status: &mut String) -> Prepared {
+fn parse_target(arg: &Option<String>) -> Target {
+    match arg.as_deref() {
+        Some("full") => Target::Full,
+        Some(s) if s.starts_with('m') => s[1..].parse::<usize>().map(Target::Monitor).unwrap_or(Target::Area),
+        _ => Target::Area,
+    }
+}
+
+fn target_rect(t: Target, settings: &Settings) -> Result<ScreenRect, String> {
+    match t {
+        Target::Full => Ok(if settings.all_screens {
+            winapi::virtual_rect()
+        } else {
+            let (pw, ph) = capture::primary_size().unwrap_or((1920, 1080));
+            (0, 0, pw, ph)
+        }),
+        Target::Monitor(n) => winapi::monitors().get(n.wrapping_sub(1)).copied().ok_or_else(|| format!("Screen {n} is not connected.")),
+        Target::Area => Err("no fixed area".to_string()),
+    }
+}
+
+fn prepare(kind0: &str, arg: Option<String>, settings: &Settings, font: &Option<Arc<fontdue::Font>>, status: &mut String) -> Prepared {
+    // "recordfull" is the old name for "record the whole screen"
+    let (kind, arg) = if kind0 == "recordfull" { ("record", Some("full".to_string())) } else { (kind0, arg) };
     match kind {
         "open" => {
             let Some(p) = arg else { return msg_mode("No file given.".to_string()) };
@@ -143,30 +189,11 @@ fn prepare(kind: &str, arg: Option<String>, settings: &Settings, font: &Option<A
                 monitors: Vec::new(),
             }
         }
-        "recordfull" => {
-            if setup::ffmpeg_path().is_none() {
-                return Prepared {
-                    mode: WMode::NeedFfmpeg { installing: false, error: None },
-                    overlay: None,
-                    title: "SnipForge - Setup".to_string(),
-                    monitors: Vec::new(),
-                };
+        "region" | "full" | "ocr" | "record" | "scroll" | "pinregion" => {
+            let mut target = if matches!(kind, "full" | "record" | "scroll") { parse_target(&arg) } else { Target::Area };
+            if kind == "full" && target == Target::Area {
+                target = Target::Full;
             }
-            winapi::minimize_other_windows();
-            let rect = if settings.all_screens {
-                winapi::virtual_rect()
-            } else {
-                let (pw, ph) = capture::primary_size().unwrap_or((1920, 1080));
-                (0, 0, pw, ph)
-            };
-            Prepared {
-                mode: WMode::Countdown { total: settings.rec_countdown, ends: None, then: Some(rect) },
-                overlay: None,
-                title: "SnipForge Countdown".to_string(),
-                monitors: Vec::new(),
-            }
-        }
-        "region" | "ocr" | "record" | "full" | "scroll" | "pinregion" => {
             if kind == "record" && setup::ffmpeg_path().is_none() {
                 return Prepared {
                     mode: WMode::NeedFfmpeg { installing: false, error: None },
@@ -176,47 +203,75 @@ fn prepare(kind: &str, arg: Option<String>, settings: &Settings, font: &Option<A
                 };
             }
             winapi::minimize_other_windows();
-            if settings.delay > 0 {
-                run_countdown(settings.delay); // visible 3-2-1 while you set the scene up
+
+            // recording / scrolling a fixed screen: no selection step, just the countdown card
+            if matches!(kind, "record" | "scroll") && target != Target::Area {
+                let rect = match target_rect(target, settings) {
+                    Ok(r) => r,
+                    Err(e) => return msg_mode(e),
+                };
+                thread::sleep(Duration::from_millis(350));
+                let then = if kind == "record" { Then::Record(rect) } else { Then::Scroll(rect) };
+                return Prepared {
+                    mode: WMode::Countdown { total: settings.rec_countdown, ends: None, then: Some(then) },
+                    overlay: None,
+                    title: "SnipForge Countdown".to_string(),
+                    monitors: Vec::new(),
+                };
+            }
+
+            // screenshots honour the delay timer (with a visible countdown); recording and scrolling count down later
+            if matches!(kind, "region" | "full" | "ocr" | "pinregion") && settings.delay > 0 {
+                run_countdown(settings.delay);
                 thread::sleep(Duration::from_millis(250));
             } else {
                 thread::sleep(Duration::from_millis(450));
             }
-            let (img, origin) = match capture::grab_screens(settings.all_screens) {
-                Ok(v) => v,
-                Err(e) => return msg_mode(format!("Capture failed: {e}")),
-            };
+
             if kind == "full" {
+                let rect = match target_rect(target, settings) {
+                    Ok(r) => r,
+                    Err(e) => return msg_mode(e),
+                };
+                let img = match capture::grab_rect(rect.0, rect.1, rect.2, rect.3) {
+                    Ok(i) => i,
+                    Err(e) => return msg_mode(format!("Capture failed: {e}")),
+                };
                 let path = settings.shots_path().join(format!("snip_{}.png", util::timestamp()));
                 let _ = img.save(&path);
                 if settings.auto_copy {
                     let _ = util::copy_image(&img);
                 }
                 *status = format!("Saved to {}", path.display());
-                Prepared {
+                return Prepared {
                     mode: WMode::Editing(Box::new(Editor::new(img, path, font.clone()))),
                     overlay: None,
                     title: "SnipForge - Editor".to_string(),
                     monitors: Vec::new(),
-                }
-            } else {
-                let purpose = match kind {
-                    "ocr" => Purpose::Ocr,
-                    "record" => Purpose::Record,
-                    "scroll" => Purpose::Scroll,
-                    "pinregion" => Purpose::Pin,
-                    _ => Purpose::Edit,
                 };
-                let rect = (origin.0, origin.1, img.width(), img.height());
-                let mut monitors = winapi::monitors();
-                // keep only monitors that are inside the captured area
-                monitors.retain(|m| m.0 >= rect.0 && m.1 >= rect.1 && m.0 + m.2 as i32 <= rect.0 + rect.2 as i32 + 1 && m.1 + m.3 as i32 <= rect.1 + rect.3 as i32 + 1);
-                Prepared {
-                    mode: WMode::Selecting { shot: Arc::new(img), tex: None, drag: None, purpose },
-                    overlay: Some(rect),
-                    title: "SnipForge - Select".to_string(),
-                    monitors,
-                }
+            }
+
+            // drag-a-selection modes: grab the screen first, then show the overlay
+            let (img, origin) = match capture::grab_screens(settings.all_screens) {
+                Ok(v) => v,
+                Err(e) => return msg_mode(format!("Capture failed: {e}")),
+            };
+            let purpose = match kind {
+                "ocr" => Purpose::Ocr,
+                "record" => Purpose::Record,
+                "scroll" => Purpose::Scroll,
+                "pinregion" => Purpose::Pin,
+                _ => Purpose::Edit,
+            };
+            let rect = (origin.0, origin.1, img.width(), img.height());
+            let mut monitors = winapi::monitors();
+            // keep only monitors that are inside the captured area
+            monitors.retain(|m| m.0 >= rect.0 && m.1 >= rect.1 && m.0 + m.2 as i32 <= rect.0 + rect.2 as i32 + 1 && m.1 + m.3 as i32 <= rect.1 + rect.3 as i32 + 1);
+            Prepared {
+                mode: WMode::Selecting { shot: Arc::new(img), tex: None, drag: None, purpose },
+                overlay: Some(rect),
+                title: "SnipForge - Select".to_string(),
+                monitors,
             }
         }
         _ => msg_mode(format!("Unknown mode: {kind}")),
@@ -227,6 +282,7 @@ pub fn run(kind: &str, arg: Option<String>) -> Result<(), eframe::Error> {
     let settings = Settings::load();
     let font = render::load_font().map(Arc::new);
     let mut status = String::new();
+    let kind_arg = arg.clone();
     let prep = prepare(kind, arg, &settings, &font, &mut status);
     let Prepared { mode, overlay, title, monitors } = prep;
 
@@ -238,7 +294,7 @@ pub fn run(kind: &str, arg: Option<String>) -> Result<(), eframe::Error> {
             .with_position([x as f32, y as f32])
             .with_inner_size([w as f32, h as f32]);
     }
-    if kind == "countdown" || kind == "recordfull" {
+    if matches!(mode, WMode::Countdown { .. }) {
         vb = vb.with_decorations(false).with_inner_size([190.0, 220.0]);
     }
     let kind_s = kind.to_string();
@@ -266,6 +322,11 @@ pub fn run(kind: &str, arg: Option<String>) -> Result<(), eframe::Error> {
                 virt,
                 monitors,
                 kind: kind_s,
+                kind_arg,
+                rec_region: None,
+                mic_vu: 0.0,
+                sys_vu: 0.0,
+                toast: None,
             })
         }),
     )
@@ -285,6 +346,7 @@ impl WorkerApp {
             WMode::Message(_) => View::Message,
             WMode::Countdown { .. } => View::Countdown,
             WMode::Scrolling { .. } => View::Scrolling,
+            WMode::AudioPrompt { .. } => View::AudioPrompt,
         }
     }
 
@@ -292,6 +354,7 @@ impl WorkerApp {
         winapi::release_topmost("SnipForge - Select");
         winapi::release_topmost("SnipForge Recording");
         winapi::release_topmost("SnipForge Scrolling");
+        winapi::release_topmost("SnipForge Countdown");
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.to_string()));
@@ -331,10 +394,24 @@ impl WorkerApp {
         if let Some((w, h)) = capture::primary_size() {
             self.screen_pts = vec2(w as f32 / ppp, h as f32 / ppp);
         }
+        // recording with the microphone: if Windows blocks it, ask the person before counting down
+        let mut prompt: Option<(ScreenRect, String)> = None;
+        if let WMode::Countdown { then: Some(Then::Record(r)), .. } = &self.mode {
+            if self.settings.mic {
+                if let MicAccess::Blocked(reason) = perms::mic_access() {
+                    prompt = Some((*r, reason));
+                }
+            }
+        }
+        if let Some((region, reason)) = prompt {
+            self.mode = WMode::AudioPrompt { region, reason };
+            self.windowed(ctx, vec2(560.0, 400.0), "SnipForge - Microphone");
+            return;
+        }
         match self.view() {
             View::Selecting => ctx.send_viewport_cmd(egui::ViewportCommand::Focus),
             View::Editing => self.show_editor_window(ctx),
-            View::Recording | View::RecDone => {}
+            View::Recording | View::RecDone | View::Scrolling => {}
             View::Countdown => {
                 if let WMode::Countdown { total, ends, .. } = &mut self.mode {
                     *ends = Some(Instant::now() + Duration::from_secs(*total as u64));
@@ -370,7 +447,7 @@ impl WorkerApp {
                 }
                 WMsg::Ffmpeg(res) => match res {
                     Ok(_) => {
-                        util::spawn_worker(&self.kind, None);
+                        util::spawn_worker(&self.kind, self.kind_arg.as_deref());
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     Err(e) => self.mode = WMode::NeedFfmpeg { installing: false, error: Some(e) },
@@ -380,7 +457,7 @@ impl WorkerApp {
 
         // recording progress / stop requests
         // scrolling capture progress / finish
-        let mut scroll_done: Option<Result<RgbaImage, String>> = None;
+        let mut scroll_done: Option<Result<ScrollOutcome, String>> = None;
         if let WMode::Scrolling { job } = &mut self.mode {
             util::touch_marker();
             if util::take_stop_request() {
@@ -395,7 +472,12 @@ impl WorkerApp {
         if let Some(res) = scroll_done {
             util::clear_marker();
             match res {
-                Ok(img) => self.open_new_image(ctx, img),
+                Ok(o) => {
+                    self.open_new_image(ctx, o.image);
+                    if !o.note.is_empty() {
+                        self.status = format!("{}   Note: {}", self.status, o.note);
+                    }
+                }
                 Err(e) => {
                     self.mode = WMode::Message(e);
                     self.windowed(ctx, vec2(520.0, 300.0), "SnipForge");
@@ -406,6 +488,7 @@ impl WorkerApp {
 
         let mut finished: Option<Result<PathBuf, String>> = None;
         let mut rec_note = String::new();
+        let mut want_snap = false;
         if let WMode::Recording { rec, stopping, .. } = &mut self.mode {
             util::touch_marker();
             if util::take_stop_request() {
@@ -415,6 +498,9 @@ impl WorkerApp {
             if util::take_pause_request() {
                 rec.toggle_pause();
             }
+            if util::take_snap_request() {
+                want_snap = true;
+            }
             finished = rec.poll();
             if finished.is_some() {
                 rec_note = rec.note();
@@ -423,6 +509,9 @@ impl WorkerApp {
                 self.excluded = true;
             }
             ctx.request_repaint_after(Duration::from_millis(200));
+        }
+        if want_snap {
+            self.take_rec_screenshot();
         }
         if let Some(res) = finished {
             util::clear_marker();
@@ -485,7 +574,7 @@ impl WorkerApp {
             }
             Purpose::Scroll => {
                 let abs = (x as i32 + self.virt.0, y as i32 + self.virt.1, w, h);
-                self.start_scroll(ctx, abs);
+                self.begin_scroll_countdown(ctx, abs);
             }
             Purpose::Pin => {
                 let img = capture::crop(&shot, x, y, w, h);
@@ -500,18 +589,120 @@ impl WorkerApp {
     }
 
     /// Shows the 3-2-1 card, then starts recording (skipped when the countdown is set to 0).
+    /// Recording: check the microphone permission first, then count down.
     fn begin_record_countdown(&mut self, ctx: &egui::Context, region: ScreenRect) {
+        if self.settings.mic {
+            if let MicAccess::Blocked(reason) = perms::mic_access() {
+                self.mode = WMode::AudioPrompt { region, reason };
+                self.windowed(ctx, vec2(560.0, 400.0), "SnipForge - Microphone");
+                return;
+            }
+        }
+        self.begin_countdown(ctx, Then::Record(region));
+    }
+
+    fn begin_scroll_countdown(&mut self, ctx: &egui::Context, region: ScreenRect) {
+        self.begin_countdown(ctx, Then::Scroll(region));
+    }
+
+    /// Shows the 3-2-1 card, then starts (skipped when the countdown is set to 0).
+    fn begin_countdown(&mut self, ctx: &egui::Context, then: Then) {
         let secs = self.settings.rec_countdown;
         if secs == 0 {
-            self.start_recording(ctx, region);
+            self.run_then(ctx, then);
             return;
         }
-        self.mode = WMode::Countdown { total: secs, ends: Some(Instant::now() + Duration::from_secs(secs as u64)), then: Some(region) };
+        self.mode = WMode::Countdown { total: secs, ends: Some(Instant::now() + Duration::from_secs(secs as u64)), then: Some(then) };
         self.cover_frames = 0;
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Title("SnipForge Countdown".to_string()));
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(190.0, 220.0)));
         self.place_countdown(ctx);
+    }
+
+    fn run_then(&mut self, ctx: &egui::Context, then: Then) {
+        match then {
+            Then::Record(r) => self.start_recording(ctx, r),
+            Then::Scroll(r) => self.start_scroll(ctx, r),
+        }
+    }
+
+    /// Save a picture of the area being recorded, without stopping the recording.
+    fn take_rec_screenshot(&mut self) {
+        let Some((x, y, w, h)) = self.rec_region else { return };
+        let msg = match capture::grab_rect(x, y, w, h) {
+            Ok(img) => {
+                let path = self.settings.shots_path().join(format!("snip_{}.png", util::timestamp()));
+                match img.save(&path) {
+                    Ok(()) => {
+                        if self.settings.auto_copy {
+                            let _ = util::copy_image(&img);
+                        }
+                        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        format!("Screenshot saved: {name}")
+                    }
+                    Err(e) => format!("Could not save the screenshot: {e}"),
+                }
+            }
+            Err(e) => format!("Screenshot failed: {e}"),
+        };
+        self.toast = Some((msg, Instant::now()));
+    }
+
+    fn ui_audio_prompt(&mut self, ctx: &egui::Context) {
+        #[derive(Clone, Copy)]
+        enum A {
+            Settings,
+            Retry,
+            WithoutMic,
+            Cancel,
+        }
+        let mut act: Option<A> = None;
+        egui::CentralPanel::default().frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::same(24.0))).show(ctx, |ui| {
+            if let WMode::AudioPrompt { reason, .. } = &self.mode {
+                ui.label(RichText::new("Windows is blocking the microphone").size(22.0).strong().color(ACCENT));
+                ui.add_space(6.0);
+                ui.label(reason.as_str());
+                ui.add_space(10.0);
+                ui.label("To record your voice, switch it on in Windows:");
+                ui.label("1.  Press \"Open microphone settings\" below.");
+                ui.label("2.  Turn on \"Microphone access\" and \"Let desktop apps access your microphone\".");
+                ui.label("3.  Come back here and press \"Try again\".");
+                ui.add_space(14.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui::primary_button(ui, "Open microphone settings").clicked() {
+                        act = Some(A::Settings);
+                    }
+                    if ui.button("Try again").clicked() {
+                        act = Some(A::Retry);
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Record without the microphone").clicked() {
+                        act = Some(A::WithoutMic);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        act = Some(A::Cancel);
+                    }
+                });
+                ui.add_space(10.0);
+                ui.label(RichText::new("Device audio (what you hear) does not need this permission.").size(12.0).color(TEXT_DIM));
+            }
+        });
+        let region = if let WMode::AudioPrompt { region, .. } = &self.mode { Some(*region) } else { None };
+        match (act, region) {
+            (Some(A::Settings), _) => perms::open_mic_settings(),
+            (Some(A::Retry), Some(r)) => match perms::mic_access() {
+                MicAccess::Allowed => self.begin_record_countdown(ctx, r),
+                MicAccess::Blocked(reason) => self.mode = WMode::AudioPrompt { region: r, reason },
+            },
+            (Some(A::WithoutMic), Some(r)) => {
+                self.settings.mic = false;
+                self.begin_record_countdown(ctx, r);
+            }
+            (Some(A::Cancel), _) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            _ => {}
+        }
     }
 
     /// Save a freshly captured image, copy it if asked, and open the editor.
@@ -534,8 +725,8 @@ impl WorkerApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Title("SnipForge Scrolling".to_string()));
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(500.0, 58.0)));
-        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos2(((self.screen_pts.x - 500.0) / 2.0).max(0.0), 8.0)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(640.0, 62.0)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos2(((self.screen_pts.x - 640.0) / 2.0).max(0.0), 8.0)));
     }
 
     fn ui_scrolling(&mut self, ctx: &egui::Context) {
@@ -546,7 +737,7 @@ impl WorkerApp {
                 if let WMode::Scrolling { job } = &self.mode {
                     ui.horizontal_centered(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new(format!("Scrolling...  {} steps", job.steps())).size(15.0).strong());
+                        ui.label(RichText::new(format!("Scrolling: {} steps, {} px tall", job.steps(), job.rows())).size(15.0).strong());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui::danger_button(ui, "Stop and save").clicked() {
                                 stop = true;
@@ -573,16 +764,17 @@ impl WorkerApp {
         let opts = RecOptions { fps: self.settings.fps, mic: self.settings.mic, system: self.settings.system_audio };
         let rec = Recorder::start(ctx.clone(), region, opts, out, ff);
         util::touch_marker();
+        self.excluded = false;
+        self.rec_region = Some(region);
         self.mode = WMode::Recording { rec, started: Instant::now(), stopping: false };
         // shrink to a small floating bar at the top centre
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Title("SnipForge Recording".to_string()));
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(560.0, 58.0)));
-        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos2(((self.screen_pts.x - 560.0) / 2.0).max(0.0), 8.0)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(880.0, 62.0)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos2(((self.screen_pts.x - 880.0) / 2.0).max(0.0), 8.0)));
     }
 
-    // ------------------------------------------------------------------ screens
     fn place_countdown(&self, ctx: &egui::Context) {
         let ppp = ctx.pixels_per_point();
         if let Some((pw, _)) = capture::primary_size() {
@@ -597,11 +789,15 @@ impl WorkerApp {
             self.place_countdown(ctx); // small, centred at the top, above other windows
         }
         let mut done = false;
-        let mut then_region: Option<ScreenRect> = None;
+        let mut then_action: Option<Then> = None;
         let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         if let WMode::Countdown { total, ends: Some(end), then } = &self.mode {
-            then_region = *then;
-            let heading = if then.is_some() { "Recording starts in" } else { "Capturing in" };
+            then_action = *then;
+            let heading = match then {
+                Some(Then::Record(_)) => "Recording starts in",
+                Some(Then::Scroll(_)) => "Scrolling starts in",
+                None => "Capturing in",
+            };
             let now = Instant::now();
             let left = if now >= *end { Duration::ZERO } else { *end - now };
             let left_s = left.as_secs_f32();
@@ -633,17 +829,17 @@ impl WorkerApp {
                 });
         }
         if cancel {
-            if then_region.is_some() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close); // recording was not started yet
+            if then_action.is_some() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close); // nothing was started yet
             } else {
                 std::process::exit(2); // tells the capture process to stop
             }
             return;
         }
         if done {
-            match then_region {
-                Some(r) => {
-                    self.start_recording(ctx, r);
+            match then_action {
+                Some(t) => {
+                    self.run_then(ctx, t);
                     return;
                 }
                 None => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
@@ -939,7 +1135,7 @@ impl WorkerApp {
             if let Some(p) = rfd::FileDialog::new().add_filter("ffmpeg", &["exe"]).pick_file() {
                 match setup::import_ffmpeg(&p) {
                     Ok(_) => {
-                        util::spawn_worker(&self.kind, None);
+                        util::spawn_worker(&self.kind, self.kind_arg.as_deref());
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     Err(e) => self.mode = WMode::NeedFfmpeg { installing: false, error: Some(e) },
@@ -953,13 +1149,23 @@ impl WorkerApp {
     }
 
     fn ui_recording(&mut self, ctx: &egui::Context) {
+        #[derive(Clone, Copy, PartialEq)]
         enum Act {
             Stop,
             Pause,
             Mic,
             Sys,
+            Shot,
+            FixMic,
         }
         let mut act: Option<Act> = None;
+        // smooth the level meters so they are readable
+        let (ml, sl) = if let WMode::Recording { rec, .. } = &self.mode { (rec.mic_level(), rec.sys_level()) } else { (0.0, 0.0) };
+        self.mic_vu = ml.max(self.mic_vu * 0.88);
+        self.sys_vu = sl.max(self.sys_vu * 0.88);
+        let (mic_vu, sys_vu) = (self.mic_vu, self.sys_vu);
+        let toast = self.toast.as_ref().filter(|(_, t)| t.elapsed() < Duration::from_secs(3)).map(|(s, _)| s.clone());
+
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(CARD).stroke(Stroke::new(1.0, BORDER)).inner_margin(egui::Margin::symmetric(14.0, 8.0)))
             .show(ctx, |ui| {
@@ -971,8 +1177,11 @@ impl WorkerApp {
                         let blink = (started.elapsed().as_millis() / 500) % 2 == 0;
                         let col = if paused { WARN } else { DANGER };
                         ui.painter().circle_filled(r.center(), 6.0, if paused || blink { col } else { col.gamma_multiply(0.35) });
-                        let label = if paused { "PAUSED" } else { "REC" };
-                        ui.label(RichText::new(format!("{label}  {:02}:{:02}", secs / 60, secs % 60)).size(16.0).strong());
+                        let label = if paused { "Paused" } else { "Recording" };
+                        ui.label(RichText::new(format!("{label}  {:02}:{:02}", secs / 60, secs % 60)).size(15.0).strong());
+                        if let Some(t) = &toast {
+                            ui.label(RichText::new(t.as_str()).size(12.0).color(SUCCESS));
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if *stopping {
                                 ui.label("Saving...");
@@ -981,15 +1190,33 @@ impl WorkerApp {
                             if ui::danger_button(ui, "Stop").clicked() {
                                 act = Some(Act::Stop);
                             }
+                            if ui.button("Screenshot").on_hover_text("Save a picture of the recorded area (Ctrl+Alt+K)").clicked() {
+                                act = Some(Act::Shot);
+                            }
                             if ui.button(if paused { "Resume" } else { "Pause" }).clicked() {
                                 act = Some(Act::Pause);
                             }
-                            if chip(ui, "Audio", rec.sys_on(), !rec.sys_failed()).clicked() {
+                            ui.separator();
+                            let sys_ok = !rec.sys_failed();
+                            let r = chip(ui, "Audio", rec.sys_on(), sys_ok);
+                            if !sys_ok {
+                                r.on_disabled_hover_text(rec.sys_error());
+                            } else if r.clicked() {
                                 act = Some(Act::Sys);
                             }
-                            if chip(ui, "Mic", rec.mic_on(), !rec.mic_failed()).clicked() {
+                            meter(ui, sys_vu, rec.sys_on() && sys_ok);
+                            ui.separator();
+                            let mic_ok = !rec.mic_failed();
+                            if !mic_ok && ui.small_button("Fix mic").on_hover_text("Open the Windows microphone settings").clicked() {
+                                act = Some(Act::FixMic);
+                            }
+                            let r = chip(ui, "Mic", rec.mic_on(), mic_ok);
+                            if !mic_ok {
+                                r.on_disabled_hover_text(rec.mic_error());
+                            } else if r.clicked() {
                                 act = Some(Act::Mic);
                             }
+                            meter(ui, mic_vu, rec.mic_on() && mic_ok);
                         });
                     });
                 }
@@ -1003,9 +1230,15 @@ impl WorkerApp {
                 Some(Act::Pause) => rec.toggle_pause(),
                 Some(Act::Mic) => rec.toggle_mic(),
                 Some(Act::Sys) => rec.toggle_sys(),
-                None => {}
+                _ => {}
             }
         }
+        match act {
+            Some(Act::Shot) => self.take_rec_screenshot(),
+            Some(Act::FixMic) => perms::open_mic_settings(),
+            _ => {}
+        }
+        ctx.request_repaint_after(Duration::from_millis(60)); // keeps the level meters moving
     }
 
     fn ui_rec_done(&mut self, ctx: &egui::Context) {
@@ -1083,6 +1316,17 @@ fn chip(ui: &mut egui::Ui, name: &str, on: bool, usable: bool) -> egui::Response
     ui.add(egui::Button::new(RichText::new(text).color(col)).fill(fill))
 }
 
+/// A thin live level meter (so you can see at once whether sound is arriving).
+fn meter(ui: &mut egui::Ui, level: f32, live: bool) {
+    let (rect, _) = ui.allocate_exact_size(vec2(44.0, 8.0), Sense::hover());
+    let p = ui.painter_at(rect);
+    p.rect_filled(rect, 4.0, Color32::from_rgb(226, 230, 238));
+    let w = rect.width() * level.clamp(0.0, 1.0).sqrt(); // sqrt: quiet sounds still show
+    if w > 0.5 {
+        p.rect_filled(Rect::from_min_size(rect.min, vec2(w, rect.height())), 4.0, if live { SUCCESS } else { TEXT_DIM });
+    }
+}
+
 impl eframe::App for WorkerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.inited {
@@ -1100,6 +1344,7 @@ impl eframe::App for WorkerApp {
             View::Message => self.ui_message(ctx),
             View::Countdown => self.ui_countdown(ctx),
             View::Scrolling => self.ui_scrolling(ctx),
+            View::AudioPrompt => self.ui_audio_prompt(ctx),
         }
     }
 }

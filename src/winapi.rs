@@ -16,6 +16,8 @@ extern "system" {
     fn SetForegroundWindow(hwnd: Hwnd) -> i32;
     fn GetSystemMetrics(index: i32) -> i32;
     fn SetCursorPos(x: i32, y: i32) -> i32;
+    fn WindowFromPoint(p: Point) -> isize;
+    fn GetAncestor(hwnd: isize, flags: u32) -> isize;
     fn GetCursorPos(p: *mut Point) -> i32;
     fn mouse_event(flags: u32, dx: i32, dy: i32, data: i32, extra: usize);
     fn SetProcessDpiAwarenessContext(value: isize) -> i32;
@@ -208,6 +210,17 @@ pub fn make_topmost(title: &str) {
         let hwnd = FindWindowW(ptr::null(), t.as_ptr());
         if hwnd != 0 {
             SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // HWND_TOPMOST, NOSIZE|NOMOVE|NOACTIVATE
+        }
+    }
+}
+
+/// Bring the top-level window under a screen point to the front (so it accepts scrolling / keys).
+pub fn focus_window_at(x: i32, y: i32) {
+    unsafe {
+        let h = WindowFromPoint(Point { x, y });
+        if h != 0 {
+            let root = GetAncestor(h, 2); // GA_ROOT
+            SetForegroundWindow(if root != 0 { root } else { h });
         }
     }
 }

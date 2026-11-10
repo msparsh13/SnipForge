@@ -12,6 +12,13 @@
 (The Python edition in `snipforge.zip` already has working versions of all of these, so they
 are a port job, not new design.)
 
+## Done in v0.8
+- Tabbed home window (Capture, Record, Tools, Settings) with a screen map; screenshot, scrolling screenshot and recording all choose area / full screen / one screen the same way
+- Screenshot button on the recording bar (and Ctrl+Alt+K)
+- Scrolling capture reworked: auto-calibrated steps, waits for the page to settle, focuses the page, clear notes
+- Microphone permission check and prompt, audio test buttons, live level meters, readable audio errors
+- New look: teal palette and Windows' Segoe UI font
+
 ## Done in v0.7
 - Scrolling capture, pin to screen, searchable history (with text inside screenshots), video editor (cut, speed, captions)
 

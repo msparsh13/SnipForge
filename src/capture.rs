@@ -85,3 +85,19 @@ pub fn grab_screens(all: bool) -> Result<(RgbaImage, (i32, i32)), String> {
     }
     grab_primary().map(|img| (img, (0, 0)))
 }
+
+/// Grab any rectangle of the screen (it may be on any monitor, or span several).
+pub fn grab_rect(x: i32, y: i32, w: u32, h: u32) -> Result<RgbaImage, String> {
+    match gdi_grab(x, y, w, h) {
+        Ok(img) => Ok(img),
+        Err(e) => {
+            // GDI sometimes returns black for protected content; the primary screen has a second method
+            if let Some((pw, ph)) = primary_size() {
+                if (x, y, w, h) == (0, 0, pw, ph) {
+                    return grab_primary();
+                }
+            }
+            Err(e)
+        }
+    }
+}

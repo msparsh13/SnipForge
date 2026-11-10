@@ -138,6 +138,24 @@ pub fn take_pause_request() -> bool {
     }
 }
 
+fn snap_path() -> PathBuf {
+    std::env::temp_dir().join("snipforge_recording.snap")
+}
+
+pub fn request_snap() {
+    let _ = std::fs::write(snap_path(), "snap");
+}
+
+pub fn take_snap_request() -> bool {
+    let p = snap_path();
+    if p.exists() {
+        let _ = std::fs::remove_file(p);
+        true
+    } else {
+        false
+    }
+}
+
 pub fn request_stop() {
     let _ = std::fs::write(stop_path(), "stop");
 }

@@ -1,4 +1,4 @@
-# SnipForge (Rust edition) v0.7
+# SnipForge (Rust edition) v0.8
 
 Native Windows screenshot / annotate / OCR / screen-recording tool (Rust + egui, one `.exe`).
 
@@ -12,6 +12,16 @@ Native Windows screenshot / annotate / OCR / screen-recording tool (Rust + egui,
    progress bar. If your network blocks the download, use **Choose ffmpeg.exe...** in the Components box
    (or on the recording setup screen) to point it at an ffmpeg.exe you downloaded yourself.
    Text recognition uses the OCR built into Windows 10/11, so there is nothing to install.
+
+## The window
+Four tabs: **Capture**, **Record**, **Tools**, **Settings**.
+
+- **What to capture** is chosen the same way for screenshots, scrolling screenshots and recording: a small map shows
+  your real monitors. Click one to choose just that screen, or pick *Select an area* / *Full screen* (*All screens* when
+  you have several monitors) from the chips under the map. No selection step is needed for a whole screen.
+- **Record** also has the sound options with *Test* buttons (see "Sound" below).
+- **Tools**: History, video editor, picture editor, pin the clipboard picture, open the folders.
+- **Settings**: screens, clipboard, save folders, the recording engine, and the list of keyboard shortcuts.
 
 ## Use
 | Action | Hotkey |
@@ -41,10 +51,25 @@ The text appears in a window and is copied to the clipboard.
 Large screenshots open in a maximised editor window; the capture overlay is forced to cover the whole screen.
 Undo/redo (Ctrl+Z / Ctrl+Y), copy (Ctrl+C), save (Ctrl+S), save as. Crop: drag, then Enter to apply.
 
+## Recording bar
+While recording, the floating bar has **Pause**, **Screenshot** (saves a picture of the recorded area without
+stopping; also Ctrl+Alt+K), **Stop**, and **Mic** / **Audio** switches with live level meters.
+
+## Sound: permission and testing
+- Windows does not let an app give itself microphone permission, so SnipForge checks the Windows privacy switch
+  before recording. If the microphone is blocked it tells you, opens the right Windows settings page, and lets you
+  try again, record without the microphone, or cancel.
+- *Device audio* (what you hear) needs no permission.
+- On the Record tab, **Test microphone** and **Test device audio** listen for 3 seconds and report what they heard, so
+  you can see which one is silent. On the bar, a green meter moves when sound is arriving; a source that could not
+  start shows *n/a* with the reason on hover (and **Fix mic** opens the Windows settings).
+
 ## Scrolling capture
 Drag over a scrollable area (a web page, a document...). SnipForge scrolls it for you, grabs frames and stitches them
 into one tall image, then opens it in the editor. It stops at the end of the page, or press **Stop and save** /
 Ctrl+Alt+S. Keep the pointer over the page; move it away to reach the Stop button. Sticky headers are ignored.
+The scroll distance is calibrated automatically, each step waits for the page to stop moving, and the page is
+brought to the front first. If it stops early you get a note saying why.
 
 ## Pin to screen
 Pin a region (Ctrl+Alt+N), the editor image (*Pin to screen* button), a history item, or the clipboard image.

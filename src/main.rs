@@ -12,6 +12,7 @@ mod hotkeys;
 mod launcher;
 mod media;
 mod ocr;
+mod perms;
 mod pinview;
 mod record;
 mod render;

@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::{BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -33,6 +33,10 @@ struct Shared {
     sys_on: Arc<AtomicBool>,
     mic_failed: AtomicBool,
     sys_failed: AtomicBool,
+    mic_level: Arc<AtomicU32>,
+    sys_level: Arc<AtomicU32>,
+    mic_err: Mutex<String>,
+    sys_err: Mutex<String>,
     active_ms: AtomicU64,
     note: Mutex<String>,
 }
@@ -78,6 +82,20 @@ impl Recorder {
     pub fn sys_failed(&self) -> bool {
         self.shared.sys_failed.load(Ordering::Relaxed)
     }
+    /// Current loudness 0.0 .. 1.0 of the microphone / device audio.
+    pub fn mic_level(&self) -> f32 {
+        self.shared.mic_level.load(Ordering::Relaxed) as f32 / 1000.0
+    }
+    pub fn sys_level(&self) -> f32 {
+        self.shared.sys_level.load(Ordering::Relaxed) as f32 / 1000.0
+    }
+    /// Why the microphone / device audio could not start (empty if it did).
+    pub fn mic_error(&self) -> String {
+        self.shared.mic_err.lock().map(|e| e.clone()).unwrap_or_default()
+    }
+    pub fn sys_error(&self) -> String {
+        self.shared.sys_err.lock().map(|e| e.clone()).unwrap_or_default()
+    }
     pub fn mic_on(&self) -> bool {
         self.shared.mic_on.load(Ordering::Relaxed)
     }
@@ -119,7 +137,8 @@ struct Track {
 impl Track {
     fn open(loopback: bool, shared: &Shared, path: PathBuf) -> Result<Track, String> {
         let enabled = if loopback { shared.sys_on.clone() } else { shared.mic_on.clone() };
-        let cap = audio::start_capture(loopback, shared.paused.clone(), enabled)?;
+        let level = if loopback { shared.sys_level.clone() } else { shared.mic_level.clone() };
+        let cap = audio::start_capture(loopback, shared.paused.clone(), enabled, level)?;
         let file = BufWriter::new(File::create(&path).map_err(|e| e.to_string())?);
         Ok(Track { cap, file, path, written: 0 })
     }
@@ -135,7 +154,7 @@ impl Track {
         let ch = self.cap.channels as u64;
         let per_sec = self.cap.rate as f64 * ch as f64;
         let expected = (active_secs * per_sec) as u64;
-        if (self.written + (per_sec * 0.15) as u64 )< expected {
+        if (self.written + (per_sec * 0.15) as u64) < expected {
             let deficit = (expected - self.written) / ch * ch;
             let zeros = [0u8; 4096];
             let mut left = deficit * 4;
@@ -266,6 +285,9 @@ fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc
                 Ok(t) => mic = Some(t),
                 Err(e) => {
                     shared.mic_failed.store(true, Ordering::Relaxed);
+                    if let Ok(mut m) = shared.mic_err.lock() {
+                        *m = e.clone();
+                    }
                     add_note(&shared, &format!("Microphone not recorded: {e}"));
                 }
             }
@@ -275,6 +297,9 @@ fn run(region: (i32, i32, u32, u32), opts: RecOptions, out: PathBuf, shared: Arc
                 Ok(t) => sys = Some(t),
                 Err(e) => {
                     shared.sys_failed.store(true, Ordering::Relaxed);
+                    if let Ok(mut m) = shared.sys_err.lock() {
+                        *m = e.clone();
+                    }
                     add_note(&shared, &format!("Device audio not recorded: {e}"));
                 }
             }

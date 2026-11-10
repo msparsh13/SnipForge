@@ -11,6 +11,8 @@ pub struct Settings {
     pub auto_copy: bool,
     pub all_screens: bool,
     pub save_ocr_text: bool,
+    pub cap_target: String, // "area", "full" or "m1", "m2"...
+    pub rec_target: String,
     // custom folders; empty string = use the default
     pub shots_dir: String,
     pub videos_dir: String,
@@ -29,6 +31,8 @@ impl Default for Settings {
             auto_copy: true,
             all_screens: true,
             save_ocr_text: false,
+            cap_target: "area".to_string(),
+            rec_target: "area".to_string(),
             shots_dir: String::new(),
             videos_dir: String::new(),
             text_dir: String::new(),
@@ -93,6 +97,8 @@ impl Settings {
                         "auto_copy" => s.auto_copy = v == "1",
                         "all_screens" => s.all_screens = v == "1",
                         "save_ocr_text" => s.save_ocr_text = v == "1",
+                        "cap_target" => s.cap_target = v.to_string(),
+                        "rec_target" => s.rec_target = v.to_string(),
                         "shots_dir" => s.shots_dir = v.to_string(),
                         "videos_dir" => s.videos_dir = v.to_string(),
                         "text_dir" => s.text_dir = v.to_string(),
@@ -108,7 +114,7 @@ impl Settings {
     pub fn save(&self) {
         let b = |x: bool| if x { 1 } else { 0 };
         let text = format!(
-            "delay={}\nfps={}\nrec_countdown={}\nmic={}\nsystem_audio={}\nauto_copy={}\nall_screens={}\nsave_ocr_text={}\nshots_dir={}\nvideos_dir={}\ntext_dir={}\nengine_dir={}\n",
+            "delay={}\nfps={}\nrec_countdown={}\nmic={}\nsystem_audio={}\nauto_copy={}\nall_screens={}\nsave_ocr_text={}\ncap_target={}\nrec_target={}\nshots_dir={}\nvideos_dir={}\ntext_dir={}\nengine_dir={}\n",
             self.delay,
             self.fps,
             self.rec_countdown,
@@ -117,6 +123,8 @@ impl Settings {
             b(self.auto_copy),
             b(self.all_screens),
             b(self.save_ocr_text),
+            self.cap_target,
+            self.rec_target,
             self.shots_dir,
             self.videos_dir,
             self.text_dir,
